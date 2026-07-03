@@ -9,9 +9,19 @@ try {
   // Always run vite build to ensure we compile the absolute latest changes.
   // We forward the active APP_URL from server.ts as VITE_API_URL so the compiled bundle knows where its host lives!
   const serverUrl = process.env.APP_URL || '';
-  const envPrefix = serverUrl ? `VITE_API_URL="${serverUrl}" ` : '';
+  const updateManifestUrl = process.env.UPDATE_MANIFEST_URL || '';
+  let envPrefix = '';
+  if (serverUrl) {
+    envPrefix += `VITE_API_URL="${serverUrl}" `;
+  }
+  if (updateManifestUrl) {
+    envPrefix += `VITE_UPDATE_MANIFEST_URL="${updateManifestUrl}" `;
+  }
   
   console.log(`Building with API URL: ${serverUrl || 'Default fallback'}`);
+  if (updateManifestUrl) {
+    console.log(`Building with custom Update Manifest URL: ${updateManifestUrl}`);
+  }
   execSync(`${envPrefix}npx vite build`, { stdio: 'inherit' });
 
   const distHtmlPath = path.join(process.cwd(), 'dist/index.html');

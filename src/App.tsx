@@ -166,6 +166,14 @@ export default function App() {
   const [customApiUrl, setCustomApiUrl] = useState<string>("");
   const [customUpdateManifestUrl, setCustomUpdateManifestUrl] = useState<string>("");
 
+  // GitHub Sync states
+  const [githubToken, setGithubToken] = useState<string>("");
+  const [githubRepoUrl, setGithubRepoUrl] = useState<string>("https://github.com/KorMakc/baltic-master-zen");
+  const [githubBranch, setGithubBranch] = useState<string>("main");
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncStatus, setSyncStatus] = useState<"idle" | "success" | "error">("idle");
+  const [syncMessage, setSyncMessage] = useState<string>("");
+
   // Calendar Planner states
   const [calendarFilter, setCalendarFilter] = useState<"all" | "in_progress" | "completed" | "pending">("all");
   const [calendarSearch, setCalendarSearch] = useState<string>("");
@@ -420,6 +428,14 @@ export default function App() {
       if (savedUpdateManifestUrl) {
         setCustomUpdateManifestUrl(savedUpdateManifestUrl);
       }
+
+      // Load GitHub Sync settings
+      const savedGithubToken = localStorage.getItem("baltic_master_github_token");
+      if (savedGithubToken) setGithubToken(savedGithubToken);
+      const savedGithubRepoUrl = localStorage.getItem("baltic_master_github_repo_url");
+      if (savedGithubRepoUrl) setGithubRepoUrl(savedGithubRepoUrl);
+      const savedGithubBranch = localStorage.getItem("baltic_master_github_branch");
+      if (savedGithubBranch) setGithubBranch(savedGithubBranch);
 
       // Load editable details
       const savedPhoneService = localStorage.getItem("bm26_phone_service");
@@ -989,6 +1005,64 @@ export default function App() {
       setUpdateStatus("error");
       setUpdateError(err.message || "Ошибка подключения к серверу");
       showToast("Сервер обновлений недоступен", "danger");
+    }
+  };
+
+  // Handle GitHub sync request
+  const handleGithubSync = async () => {
+    if (!githubToken.trim()) {
+      showToast("Пожалуйста, укажите GitHub Personal Access Token (PAT).", "danger");
+      return;
+    }
+    if (!githubRepoUrl.trim()) {
+      showToast("Пожалуйста, укажите репозиторий GitHub.", "danger");
+      return;
+    }
+
+    // Save inputs to localStorage
+    localStorage.setItem("baltic_master_github_token", githubToken.trim());
+    localStorage.setItem("baltic_master_github_repo_url", githubRepoUrl.trim());
+    localStorage.setItem("baltic_master_github_branch", githubBranch.trim());
+
+    setIsSyncing(true);
+    setSyncStatus("idle");
+    setSyncMessage("Запуск сборки приложения и синхронизации с GitHub...");
+
+    try {
+      const res = await fetch(getApiUrl("/api/github-sync"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          githubToken: githubToken.trim(),
+          repoUrl: githubRepoUrl.trim(),
+          branch: githubBranch.trim()
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || `Сервер ответил с кодом ${res.status}`);
+      }
+
+      setSyncStatus("success");
+      setSyncMessage(data.message || "Синхронизация успешно завершена!");
+      
+      // Auto-set the custom update manifest URL to the raw GitHub URL!
+      if (data.manifestUrl) {
+        setCustomUpdateManifestUrl(data.manifestUrl);
+        localStorage.setItem("baltic_master_update_manifest_url", data.manifestUrl);
+      }
+
+      showToast("Синхронизация с GitHub успешно выполнена!", "success");
+    } catch (err: any) {
+      console.error("GitHub Sync error:", err);
+      setSyncStatus("error");
+      setSyncMessage(err.message || "Произошла ошибка подключения.");
+      showToast("Ошибка синхронизации с GitHub", "danger");
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -2856,6 +2930,123 @@ export default function App() {
                       <span className="text-emerald-700 font-bold">
                         {customUpdateManifestUrl ? "Публичный GitHub (Рекомендуется)" : "Локальный API сервер"}
                       </span>
+                    </div>
+                  </div>
+
+                  {/* Automated GitHub Synchronization Panel */}
+                  <div className="p-4 bg-indigo-50/45 rounded-xl border border-indigo-100/60 space-y-4 text-left">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                        <Github className="w-4 h-4 text-indigo-600" />
+                        Автоматическая синхронизация с вашим GitHub
+                      </span>
+                      <span className="text-[10px] font-bold text-indigo-600 bg-indigo-100/50 px-2 py-0.5 rounded-full">
+                        Один клик
+                      </span>
+                    </div>
+                    
+                    <p className="text-[11px] text-slate-500 leading-normal">
+                      Скомпилируйте приложение со встроенным адресом обновлений и отправьте его напрямую в ваш репозиторий GitHub. Программа на Mac сама считает этот репозиторий и мгновенно обновится!
+                    </p>
+
+                    <div className="space-y-2.5">
+                      {/* GitHub PAT Input */}
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                          1. Ваш GitHub Personal Access Token (PAT)
+                        </label>
+                        <input
+                          type="password"
+                          placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxx"
+                          value={githubToken}
+                          onChange={(e) => setGithubToken(e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800 font-mono"
+                        />
+                        <p className="text-[9px] text-slate-400 mt-0.5">
+                          Создайте токен с доступом к репозиториям на{" "}
+                          <a
+                            href="https://github.com/settings/tokens"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-indigo-600 underline hover:text-indigo-700"
+                          >
+                            github.com/settings/tokens
+                          </a>{" "}
+                          (выберите область `repo`).
+                        </p>
+                      </div>
+
+                      {/* Repo URL Input */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div className="sm:col-span-2">
+                          <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                            2. Репозиторий GitHub (Ссылка или owner/repo)
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="https://github.com/KorMakc/baltic-master-zen"
+                            value={githubRepoUrl}
+                            onChange={(e) => setGithubRepoUrl(e.target.value)}
+                            className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                            3. Ветка
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="main"
+                            value={githubBranch}
+                            onChange={(e) => setGithubBranch(e.target.value)}
+                            className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800 font-mono"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Sync action triggers */}
+                    <div className="pt-2 flex flex-col gap-2">
+                      <button
+                        onClick={handleGithubSync}
+                        disabled={isSyncing}
+                        className={`w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm ${
+                          isSyncing ? "opacity-70 cursor-not-allowed" : ""
+                        }`}
+                      >
+                        {isSyncing ? (
+                          <>
+                            <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            Синхронизация и компиляция...
+                          </>
+                        ) : (
+                          <>
+                            <Github className="w-3.5 h-3.5" />
+                            Собрать и залить на GitHub
+                          </>
+                        )}
+                      </button>
+
+                      {/* Sync logs and status */}
+                      {syncMessage && (
+                        <div className={`p-2.5 rounded-lg text-[10px] font-mono leading-relaxed border ${
+                          syncStatus === "success" 
+                            ? "bg-emerald-50 text-emerald-800 border-emerald-100" 
+                            : syncStatus === "error" 
+                              ? "bg-rose-50 text-rose-800 border-rose-100" 
+                              : "bg-slate-50 text-slate-600 border-slate-100"
+                        }`}>
+                          <div className="font-bold mb-1">
+                            {syncStatus === "success" ? "✓ УСПЕХ:" : syncStatus === "error" ? "✗ ОШИБКА:" : "ℹ СТАТУС:"}
+                          </div>
+                          <div>{syncMessage}</div>
+                          {syncStatus === "success" && (
+                            <div className="mt-1 text-slate-500 text-[9px] leading-tight">
+                              Адрес манифеста обновлений автоматически прописан в настройках программы! Ваша программа на Mac теперь автоматически будет использовать эту ссылку.
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
 

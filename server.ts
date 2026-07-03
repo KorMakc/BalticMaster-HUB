@@ -539,9 +539,15 @@ function getSecureServerUrl(req: express.Request): string {
 }
 
 // Helper to regenerate offline HTML asynchronously
-async function regenerateOfflineHtml(serverUrl?: string): Promise<void> {
-  console.log("Regenerating offline HTML file asynchronously with serverUrl:", serverUrl);
-  const envPrefix = serverUrl ? `APP_URL="${serverUrl}" ` : "";
+async function regenerateOfflineHtml(serverUrl?: string, updateManifestUrl?: string): Promise<void> {
+  console.log("Regenerating offline HTML file asynchronously with serverUrl:", serverUrl, "and updateManifestUrl:", updateManifestUrl);
+  let envPrefix = "";
+  if (serverUrl) {
+    envPrefix += `APP_URL="${serverUrl}" `;
+  }
+  if (updateManifestUrl) {
+    envPrefix += `UPDATE_MANIFEST_URL="${updateManifestUrl}" `;
+  }
   await execPromise(`${envPrefix}npx tsx generate-single-html.js`);
 }
 
@@ -757,6 +763,145 @@ app.get("/api/check-update", (req, res) => {
     ],
     downloadUrl: "/api/download-offline-html"
   });
+});
+
+app.post("/api/github-sync", async (req, res) => {
+  const { githubToken, repoUrl, branch } = req.body;
+
+  if (!githubToken || !githubToken.trim()) {
+    return res.status(400).json({ error: "Не указан GitHub Personal Access Token (PAT)." });
+  }
+  if (!repoUrl || !repoUrl.trim()) {
+    return res.status(400).json({ error: "Не указана ссылка или название репозитория GitHub." });
+  }
+
+  const activeBranch = branch && branch.trim() ? branch.trim() : "main";
+
+  let cleanRepo = repoUrl.trim().replace(/\/$/, "");
+  if (cleanRepo.startsWith("https://github.com/")) {
+    cleanRepo = cleanRepo.replace("https://github.com/", "");
+  } else if (cleanRepo.startsWith("http://github.com/")) {
+    cleanRepo = cleanRepo.replace("http://github.com/", "");
+  } else if (cleanRepo.startsWith("github.com/")) {
+    cleanRepo = cleanRepo.replace("github.com/", "");
+  }
+
+  const parts = cleanRepo.split("/");
+  if (parts.length < 2) {
+    return res.status(400).json({ error: "Неверный формат репозитория. Используйте формат: ИмяПользователя/ИмяРепозитория" });
+  }
+  const owner = parts[0];
+  const repo = parts[1];
+
+  try {
+    const serverUrl = getSecureServerUrl(req);
+    const targetManifestUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${activeBranch}/update.json`;
+    const targetHtmlDownloadUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${activeBranch}/baltic_master_zen.html`;
+
+    console.log(`GitHub Sync initiated for ${owner}/${repo} on branch ${activeBranch}`);
+    console.log(`Baking manifest URL: ${targetManifestUrl}`);
+
+    // 1. Compile/Regenerate offline HTML with the GitHub manifest URL baked in
+    await regenerateOfflineHtml(serverUrl, targetManifestUrl);
+
+    const generatedHtmlPath = path.join(process.cwd(), "baltic_master_zen.html");
+    if (!fs.existsSync(generatedHtmlPath)) {
+      throw new Error("Не удалось найти скомпилированный файл baltic_master_zen.html.");
+    }
+
+    // Read the compiled HTML content
+    const htmlContent = fs.readFileSync(generatedHtmlPath);
+
+    // 2. Prepare the update.json content dynamically
+    const updateInfo = {
+      latestVersion: "2.8.1",
+      minCompatibleVersion: "2.0.0",
+      releaseDate: new Date().toISOString().split("T")[0],
+      changelog: [
+        "Глубокий ИИ-анализ орфографии, водности, стиля и выявление роботизированного почерка (клише) через Google Gemini API",
+        "Интеллектуальное очеловечивание (Humanizer) текстов статей с автоматической очисткой от лишнего форматирования (*, **, ###) для безупречной публикации в Дзене",
+        "Прямая поддержка OTA-обновлений для macOS: новые версии записываются напрямую в файл baltic_master_zen.html на жестком диске",
+        "Оптимизированный серверный сборщик macOS-приложений на лету с очисткой устаревшего кэша и поддержкой Apple Silicon"
+      ],
+      downloadUrl: targetHtmlDownloadUrl
+    };
+    const jsonContent = JSON.stringify(updateInfo, null, 2);
+
+    // 3. Helper to push to GitHub via Fetch API
+    const pushToGithub = async (filePath: string, content: Buffer | string, commitMessage: string) => {
+      const url = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`;
+      
+      // Check if file exists to get SHA
+      let sha: string | undefined = undefined;
+      try {
+        const checkRes = await (globalThis as any).fetch(`${url}?ref=${activeBranch}`, {
+          method: "GET",
+          headers: {
+            "Authorization": `token ${githubToken.trim()}`,
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "BalticMasterZen-App"
+          }
+        });
+        if (checkRes.ok) {
+          const data = await checkRes.json() as any;
+          sha = data.sha;
+        }
+      } catch (err) {
+        console.log(`Checking existing file ${filePath} failed (might not exist yet):`, err);
+      }
+
+      const base64Content = Buffer.isBuffer(content) 
+        ? content.toString("base64") 
+        : Buffer.from(content).toString("base64");
+
+      const body: any = {
+        message: commitMessage,
+        content: base64Content,
+        branch: activeBranch
+      };
+      if (sha) {
+        body.sha = sha;
+      }
+
+      const putRes = await (globalThis as any).fetch(url, {
+        method: "PUT",
+        headers: {
+          "Authorization": `token ${githubToken.trim()}`,
+          "Accept": "application/vnd.github.v3+json",
+          "User-Agent": "BalticMasterZen-App",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (!putRes.ok) {
+        const errText = await putRes.text();
+        throw new Error(`Ошибка GitHub API (${putRes.status}): ${errText}`);
+      }
+    };
+
+    // 4. Push baltic_master_zen.html
+    console.log("Pushing baltic_master_zen.html to GitHub...");
+    await pushToGithub("baltic_master_zen.html", htmlContent, `Release v2.8.1 (Auto-build from AI Studio)`);
+
+    // 5. Push update.json
+    console.log("Pushing update.json to GitHub...");
+    await pushToGithub("update.json", jsonContent, `Update update.json for v2.8.1`);
+
+    console.log("GitHub sync completed successfully!");
+
+    res.json({
+      success: true,
+      message: "Синхронизация успешно завершена! Файлы залиты на GitHub.",
+      manifestUrl: targetManifestUrl,
+      htmlUrl: targetHtmlDownloadUrl,
+      version: "2.8.1"
+    });
+
+  } catch (error: any) {
+    console.error("GitHub Sync Error:", error);
+    res.status(500).json({ error: error.message || "Произошла непредвиденная ошибка при синхронизации с GitHub." });
+  }
 });
 
 async function startServer() {
