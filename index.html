@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Baltic Master Zen</title>
+    <script>
+      // Self-updating bootloader for Baltic Master Zen offline file (file:// protocol)
+      (function() {
+        if (window.location.protocol === 'file:') {
+          try {
+            var dbName = 'BalticMasterZenDB';
+            var storeName = 'html_cache';
+            var key = 'latest_html';
+            
+            var request = indexedDB.open(dbName, 1);
+            request.onupgradeneeded = function(e) {
+              var db = e.target.result;
+              if (!db.objectStoreNames.contains(storeName)) {
+                db.createObjectStore(storeName);
+              }
+            };
+            request.onsuccess = function(e) {
+              var db = e.target.result;
+              var transaction = db.transaction([storeName], 'readonly');
+              var store = transaction.objectStore(storeName);
+              var getReq = store.get(key);
+              getReq.onsuccess = function() {
+                var cachedData = getReq.result;
+                if (cachedData && cachedData.html) {
+                  var currentVersion = '2.8.0';
+                  if (cachedData.version !== currentVersion && !sessionStorage.getItem('bootloader_skipped')) {
+                    console.log('Bootloader: Loading cached version v' + cachedData.version);
+                    sessionStorage.setItem('bootloader_skipped', 'true');
+                    document.open();
+                    document.write(cachedData.html);
+                    document.close();
+                  }
+                }
+              };
+            };
+          } catch (err) {
+            console.error('Bootloader error:', err);
+          }
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
