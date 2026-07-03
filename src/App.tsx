@@ -167,7 +167,7 @@ export default function App() {
   const [customUpdateManifestUrl, setCustomUpdateManifestUrl] = useState<string>("");
 
   // GitHub Sync states
-  const [githubToken, setGithubToken] = useState<string>("");
+  const [githubToken, setGithubToken] = useState<string>("SYSTEM_TOKEN_PLACEHOLDER");
   const [githubRepoUrl, setGithubRepoUrl] = useState<string>("https://github.com/KorMakc/baltic-master-zen");
   const [githubBranch, setGithubBranch] = useState<string>("main");
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
@@ -1035,7 +1035,7 @@ export default function App() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          githubToken: githubToken.trim(),
+          githubToken: githubToken.trim() === "SYSTEM_TOKEN_PLACEHOLDER" ? "" : githubToken.trim(),
           repoUrl: githubRepoUrl.trim(),
           branch: githubBranch.trim()
         })
@@ -1710,7 +1710,7 @@ export default function App() {
           <div>
             <h1 className="text-sm font-black text-gray-950 leading-none tracking-tight">Балтик Мастер Маркетинг</h1>
             <div className="flex items-center gap-2 mt-0.5">
-              <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider">ДЗЕН - Hub v2.8.0</span>
+              <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider">ДЗЕН - Hub v2.8.1</span>
               <span className="text-[10px] text-slate-300">•</span>
               <span className="text-[10px] font-mono italic text-slate-500 font-medium">
                 Разработка: <span className="font-bold text-slate-700 font-sans">Макс К.</span>
@@ -2956,10 +2956,23 @@ export default function App() {
                           1. Ваш GitHub Personal Access Token (PAT)
                         </label>
                         <input
-                          type="password"
+                          type={githubToken === "SYSTEM_TOKEN_PLACEHOLDER" ? "text" : "password"}
                           placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxx"
-                          value={githubToken}
-                          onChange={(e) => setGithubToken(e.target.value)}
+                          value={githubToken === "SYSTEM_TOKEN_PLACEHOLDER" ? "•••••••• (Предустановлен)" : githubToken}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setGithubToken(val);
+                          }}
+                          onFocus={(e) => {
+                            if (githubToken === "SYSTEM_TOKEN_PLACEHOLDER") {
+                              setGithubToken("");
+                            }
+                          }}
+                          onBlur={(e) => {
+                            if (!githubToken.trim()) {
+                              setGithubToken("SYSTEM_TOKEN_PLACEHOLDER");
+                            }
+                          }}
                           className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800 font-mono"
                         />
                         <p className="text-[9px] text-slate-400 mt-0.5">
@@ -3212,27 +3225,28 @@ export default function App() {
                       История изменений (Changelog)
                     </h3>
                     <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full border border-indigo-100 uppercase tracking-wide">
-                      v2.8.0 Stable
+                      v2.8.1 Stable
                     </span>
                   </div>
 
                   <div className="space-y-5">
-                    {/* v2.8.0 */}
+                    {/* v2.8.1 */}
                     <div className="relative pl-6 pb-4 border-l-2 border-indigo-100">
                       <div className="absolute -left-[7px] top-1.5 w-3.5 h-3.5 rounded-full bg-indigo-600 border-2 border-white shadow-sm" />
                       <div className="flex items-center gap-2 mb-1.5">
-                        <span className="text-xs font-black text-slate-900 bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-lg">v2.8.0</span>
-                        <span className="text-[10px] text-slate-400 font-bold">30.06.2026</span>
+                        <span className="text-xs font-black text-slate-900 bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-lg">v2.8.1</span>
+                        <span className="text-[10px] text-slate-400 font-bold">03.07.2026</span>
                         <span className="text-[10px] bg-emerald-50 text-emerald-700 font-bold px-1.5 py-0.5 rounded-md">Текущая версия</span>
                       </div>
                       <div className="text-xs font-bold text-slate-800 mb-1">
-                        Глубокий ИИ SEO-анализатор и OTA-обновление для macOS
+                        Автосинхронизация с GitHub и автоматические OTA-обновления Mac
                       </div>
                       <ul className="text-[11px] text-slate-600 space-y-1 list-disc pl-4 leading-relaxed">
-                        <li><strong>Интерактивный ИИ SEO-анализатор:</strong> Полная генерация релевантного заголовка (Title), продающего мета-описания (Meta) и 5 ключевых тегов с оценкой качества текста и водности.</li>
-                        <li><strong>Прямая запись macOS OTA:</strong> Обновления записываются в папку пользователя и перезапускаются автоматически, решая проблему защищенных macOS-директорий.</li>
+                        <li><strong>Автоматическая сборка и деплой на GitHub:</strong> Однокликовая синхронизация генерирует автономный файл `baltic_master_zen.html` и манифест `update.json` с запеченными путями вашего GitHub-репозитория и отправляет напрямую через GitHub API.</li>
+                        <li><strong>Автоматические OTA-обновления на Mac:</strong> Запущенное приложение на Mac обращается напрямую к сырым (raw) файлам вашего GitHub-репозитория, скачивает новую версию и обновляет исполняемый код в один клик без ручных манипуляций.</li>
+                        <li><strong>Интерактивный ИИ SEO-анализатор:</strong> Генерация релевантного заголовка (Title), продающего мета-описания (Meta) и 5 ключевых тегов с оценкой качества текста и водности.</li>
                         <li><strong>Интеллектуальный ИИ-Очеловечиватель:</strong> Глубокая переработка текстов без штампов, клише, канцеляризмов и СТРОГО без мусорных markdown-символов (*, **, ###).</li>
-                        <li><strong>Сборщик macOS на лету:</strong> Оптимизированный серверный упаковщик desktop-приложений под Apple Silicon (M1/M2/M3/M4).</li>
+                        <li><strong>Оптимизированный сборщик macOS:</strong> Server-side упаковщик desktop-приложений под Apple Silicon (M1/M2/M3/M4) с автоматической очисткой устаревшего кэша.</li>
                       </ul>
                     </div>
 
