@@ -1784,7 +1784,7 @@ export default function App() {
           <div>
             <h1 className="text-sm font-black text-gray-950 leading-none tracking-tight">Балтик Мастер Маркетинг</h1>
             <div className="flex items-center gap-2 mt-0.5">
-              <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider">ДЗЕН - Hub v2.8.1</span>
+              <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider">ДЗЕН - Hub v{appVersion}</span>
               <span className="text-[10px] text-slate-300">•</span>
               <span className="text-[10px] font-mono italic text-slate-500 font-medium">
                 Разработка: <span className="font-bold text-slate-700 font-sans">Макс К.</span>
