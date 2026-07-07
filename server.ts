@@ -926,7 +926,20 @@ app.post("/api/github-sync", async (req, res) => {
           console.warn(`Attempt ${attempt} to push ${filePath} failed with status ${putRes.status}:`, errText);
 
           if (attempt === maxAttempts) {
-            throw new Error(`Ошибка GitHub API (${putRes.status}): ${errText}`);
+            let userFriendlyMsg = `Ошибка GitHub API (${putRes.status}): ${errText}`;
+            if (putRes.status === 404) {
+              userFriendlyMsg = `GitHub API вернул ошибку 404 (Not Found). Это означает, что репозиторий "${owner}/${repo}" не найден на GitHub, либо у вашего токена нет прав на запись в него.
+
+Пожалуйста, убедитесь, что:
+1) Вы правильно указали ссылку на репозиторий.
+2) Вы указали правильное название ветки (по умолчанию: main).
+3) Вы используете действующий Personal Access Token (PAT) с правами на запись (область видимости 'repo' для классических токенов или 'Contents: Read and write' для fine-grained токенов) для этого репозитория.`;
+            } else if (putRes.status === 401) {
+              userFriendlyMsg = `GitHub API вернул ошибку 401 (Unauthorized). Ваш GitHub Personal Access Token (PAT) недействителен, истек или был отозван. Пожалуйста, сгенерируйте и введите новый токен в настройках синхронизации.`;
+            } else if (putRes.status === 403) {
+              userFriendlyMsg = `GitHub API вернул ошибку 403 (Forbidden). Доступ ограничен. Пожалуйста, убедитесь, что ваш токен имеет права на запись в репозиторий "${owner}/${repo}" (требуется область 'repo' для классических токенов).`;
+            }
+            throw new Error(userFriendlyMsg);
           }
 
           // Exponential backoff

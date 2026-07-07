@@ -173,7 +173,7 @@ export default function App() {
 
   // GitHub Sync states
   const [githubToken, setGithubToken] = useState<string>("SYSTEM_TOKEN_PLACEHOLDER");
-  const [githubRepoUrl, setGithubRepoUrl] = useState<string>("https://github.com/KorMakc/baltic-master-zen");
+  const [githubRepoUrl, setGithubRepoUrl] = useState<string>("https://github.com/KorMakc/BalticMaster-HUB");
   const [githubBranch, setGithubBranch] = useState<string>("main");
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<"idle" | "success" | "error">("idle");
@@ -209,7 +209,14 @@ export default function App() {
       // Prioritize the VITE_API_URL injected during compilation (which reflects the actual active server)
       const compiledApiUrl = (import.meta as any).env.VITE_API_URL;
       if (compiledApiUrl && compiledApiUrl.trim() !== "") {
-        const base = compiledApiUrl.endsWith("/") ? compiledApiUrl.slice(0, -1) : compiledApiUrl;
+        let base = compiledApiUrl.endsWith("/") ? compiledApiUrl.slice(0, -1) : compiledApiUrl;
+        // CRITICAL FIX: If running locally outside AI Studio, any requests to private 'ais-dev' URLs
+        // will be blocked by Google Cloud Run Identity-Aware Proxy (returning sign-in HTML instead of JSON).
+        // The shared 'ais-pre' URL is public and does not require Google login.
+        // Therefore, we automatically rewrite 'ais-dev' to 'ais-pre' for offline/desktop clients!
+        if (base.includes("ais-dev-")) {
+          base = base.replace("ais-dev-", "ais-pre-");
+        }
         return `${base}${route}`;
       }
       // Fallback to the known production/shared container URL
@@ -254,16 +261,40 @@ export default function App() {
           return response;
         } else {
           console.warn(`RobustFetch: [Attempt ${attempt}] Server returned status ${response.status}.`);
-          if (attempt < maxRetries && (response.status === 503 || response.status === 502 || response.status === 504 || response.status === 408)) {
+          const isRetryable = (response.status === 503 || response.status === 502 || response.status === 504 || response.status === 408);
+          if (attempt < maxRetries && isRetryable) {
             const sleepTime = delayMs * Math.pow(1.5, attempt - 1);
             console.log(`RobustFetch: Sleeping for ${sleepTime}ms before retrying...`);
             await new Promise((resolve) => setTimeout(resolve, sleepTime));
             continue;
           }
-          throw new Error(`Сервер вернул код ошибки: ${response.status} ${response.statusText}`);
+
+          // Extract user-friendly rich error message from response if available
+          let errorMessage = `Сервер вернул код ошибки: ${response.status} ${response.statusText}`;
+          try {
+            const clone = response.clone();
+            const data = await clone.json();
+            if (data && data.error) {
+              errorMessage = data.error;
+            }
+          } catch (e) {
+            try {
+              const text = await response.text();
+              if (text && text.trim().length < 250) {
+                errorMessage = text.trim();
+              }
+            } catch (e2) {}
+          }
+
+          const customErr = new Error(errorMessage) as any;
+          customErr.isNonRetryable = true;
+          throw customErr;
         }
       } catch (err: any) {
         console.error(`RobustFetch: [Attempt ${attempt}] Fetch error:`, err);
+        if (err && err.isNonRetryable) {
+          throw err;
+        }
         if (attempt < maxRetries) {
           const sleepTime = delayMs * Math.pow(1.5, attempt - 1);
           console.log(`RobustFetch: Sleeping for ${sleepTime}ms before retrying...`);
@@ -363,7 +394,11 @@ export default function App() {
     if (isLocalFile) {
       const compiledApiUrl = (import.meta as any).env.VITE_API_URL;
       if (compiledApiUrl && compiledApiUrl.trim() !== "") {
-        return compiledApiUrl.endsWith("/") ? compiledApiUrl.slice(0, -1) : compiledApiUrl;
+        let base = compiledApiUrl.endsWith("/") ? compiledApiUrl.slice(0, -1) : compiledApiUrl;
+        if (base.includes("ais-dev-")) {
+          base = base.replace("ais-dev-", "ais-pre-");
+        }
+        return base;
       }
       return "https://ais-pre-jnnrls4j3wermypgdn6dud-351182769872.europe-west2.run.app";
     }
