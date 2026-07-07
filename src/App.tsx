@@ -98,7 +98,7 @@ export default function App() {
     setShowMacDownloadModal(true);
     setLoadingParts(true);
     try {
-      const res = await fetch(getApiUrl("/api/mac-app-parts-info"));
+      const res = await robustFetch(getApiUrl("/api/mac-app-parts-info"));
       if (!res.ok) {
         throw new Error("Не удалось получить информацию о частях.");
       }
@@ -218,6 +218,64 @@ export default function App() {
     return route;
   };
 
+  // Helper: Robust fetch with exponential backoff and cold-start detection for Cloud Run
+  const robustFetch = async (url: string, options?: RequestInit, maxRetries = 4, delayMs = 2500): Promise<Response> => {
+    let attempt = 0;
+    while (attempt < maxRetries) {
+      attempt++;
+      try {
+        console.log(`RobustFetch: [Attempt ${attempt}/${maxRetries}] Requesting ${url}...`);
+        const response = await fetch(url, options);
+        
+        const isHtmlDownload = url.includes("/api/download-offline-html");
+        
+        if (response.ok) {
+          const contentType = response.headers.get("content-type") || "";
+          if (contentType.includes("text/html")) {
+            const clone = response.clone();
+            const text = await clone.text();
+            
+            const isJsonEndpoint = !isHtmlDownload && !url.endsWith(".html") && !url.includes("/download-mac-zip") && !url.includes("/download-offline-html");
+            const looksLikeCloudRunWarming = text.includes("Please wait while your application starts") || text.includes("App is starting") || text.includes("Service Unavailable") || text.includes("Google Cloud");
+            const looksLikeAuthRedirect = text.includes("Sign in") || text.includes("google-signin") || text.includes("accounts.google.com");
+            
+            if (isJsonEndpoint || looksLikeCloudRunWarming || looksLikeAuthRedirect) {
+              console.warn(`RobustFetch: [Attempt ${attempt}] Detected cold-start/auth HTML page instead of expected resource.`);
+              if (attempt < maxRetries) {
+                const sleepTime = delayMs * Math.pow(1.5, attempt - 1);
+                console.log(`RobustFetch: Sleeping for ${sleepTime}ms before retrying...`);
+                await new Promise((resolve) => setTimeout(resolve, sleepTime));
+                continue;
+              } else {
+                throw new Error("Сервер вернул страницу авторизации или заставку запуска (HTML) вместо ожидаемых данных. Возможно, облачный контейнер холодного запуска не успел прогреться. Пожалуйста, повторите попытку через 10 секунд.");
+              }
+            }
+          }
+          return response;
+        } else {
+          console.warn(`RobustFetch: [Attempt ${attempt}] Server returned status ${response.status}.`);
+          if (attempt < maxRetries && (response.status === 503 || response.status === 502 || response.status === 504 || response.status === 408)) {
+            const sleepTime = delayMs * Math.pow(1.5, attempt - 1);
+            console.log(`RobustFetch: Sleeping for ${sleepTime}ms before retrying...`);
+            await new Promise((resolve) => setTimeout(resolve, sleepTime));
+            continue;
+          }
+          throw new Error(`Сервер вернул код ошибки: ${response.status} ${response.statusText}`);
+        }
+      } catch (err: any) {
+        console.error(`RobustFetch: [Attempt ${attempt}] Fetch error:`, err);
+        if (attempt < maxRetries) {
+          const sleepTime = delayMs * Math.pow(1.5, attempt - 1);
+          console.log(`RobustFetch: Sleeping for ${sleepTime}ms before retrying...`);
+          await new Promise((resolve) => setTimeout(resolve, sleepTime));
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new Error("Не удалось связаться с сервером после нескольких попыток.");
+  };
+
   // Helper: Parse raw GitHub URLs to retrieve API coordinates
   const parseGithubRawUrl = (url: string) => {
     if (!url) return null;
@@ -249,7 +307,7 @@ export default function App() {
       try {
         console.log(`GitHub Fetch: Attempting authenticated download of ${filePath} via GitHub API...`);
         // 1. Try fetching raw content via v3.raw media type
-        const response = await fetch(apiUrl, {
+        const response = await robustFetch(apiUrl, {
           headers: {
             "Authorization": `token ${activeToken.trim()}`,
             "Accept": "application/vnd.github.v3.raw"
@@ -264,7 +322,7 @@ export default function App() {
         console.warn(`GitHub Fetch: Raw download of ${filePath} returned ${response.status}. Trying base64 fallback...`);
         
         // 2. Fallback to json contents API if raw Accept header fails (common on older endpoints or certain proxies)
-        const jsonResponse = await fetch(apiUrl, {
+        const jsonResponse = await robustFetch(apiUrl, {
           headers: {
             "Authorization": `token ${activeToken.trim()}`,
             "Accept": "application/vnd.github.v3+json"
@@ -290,7 +348,7 @@ export default function App() {
     }
     
     // Default fallback to standard fetch (for public repos or non-github URLs)
-    return fetch(rawUrl);
+    return robustFetch(rawUrl);
   };
 
   const getCurrentlyResolvedApiUrl = (): string => {
@@ -836,7 +894,7 @@ export default function App() {
 
     setGeminiLoading(true);
     try {
-      const response = await fetch(getApiUrl("/api/generate-article"), {
+      const response = await robustFetch(getApiUrl("/api/generate-article"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1203,7 +1261,7 @@ export default function App() {
     setSyncMessage("Запуск сборки приложения и синхронизации с GitHub...");
 
     try {
-      const res = await fetch(getApiUrl("/api/github-sync"), {
+      const res = await robustFetch(getApiUrl("/api/github-sync"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1332,7 +1390,7 @@ export default function App() {
           ? `Статья о правильном регламентом сервисном обслуживании и чистке оборудования ${tmplEquipment} ${tmplBrand}`
           : `Реальный кейс из практики: ремонт профессионального кухонного оборудования ${tmplEquipment} ${tmplBrand} с неисправностью "${tmplProblem}"`;
 
-        const res = await fetch(getApiUrl("/api/generate-article"), {
+        const res = await robustFetch(getApiUrl("/api/generate-article"), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1616,7 +1674,7 @@ export default function App() {
 
     if (isSpellcheckOnline) {
       try {
-        const res = await fetch(getApiUrl("/api/check-text-quality"), {
+        const res = await robustFetch(getApiUrl("/api/check-text-quality"), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1701,7 +1759,7 @@ export default function App() {
     showToast("Запущено глубокое ИИ-очеловечивание текста...", "info");
 
     try {
-      const res = await fetch(getApiUrl("/api/humanize-text"), {
+      const res = await robustFetch(getApiUrl("/api/humanize-text"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1782,7 +1840,7 @@ export default function App() {
     showToast("Запущен глубокий SEO-анализ текста...", "info");
 
     try {
-      const res = await fetch(getApiUrl("/api/seo-analyze"), {
+      const res = await robustFetch(getApiUrl("/api/seo-analyze"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
