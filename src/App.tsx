@@ -161,7 +161,7 @@ export default function App() {
   const [isApiKeyPanelHidden, setIsApiKeyPanelHidden] = useState<boolean>(false);
 
   // App versioning and updates
-  const [appVersion, setAppVersion] = useState<string>("2.8.1");
+  const [appVersion, setAppVersion] = useState<string>("2.9.0");
   const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "available" | "downloading" | "up_to_date" | "error">("idle");
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [updateInfo, setUpdateInfo] = useState<{ latestVersion: string; changelog: string[]; downloadUrl?: string } | null>(null);
@@ -3364,18 +3364,36 @@ export default function App() {
                       История изменений (Changelog)
                     </h3>
                     <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full border border-indigo-100 uppercase tracking-wide">
-                      v2.8.1 Stable
+                      v2.9.0 Stable
                     </span>
                   </div>
 
                   <div className="space-y-5">
-                    {/* v2.8.1 */}
+                    {/* v2.9.0 */}
                     <div className="relative pl-6 pb-4 border-l-2 border-indigo-100">
                       <div className="absolute -left-[7px] top-1.5 w-3.5 h-3.5 rounded-full bg-indigo-600 border-2 border-white shadow-sm" />
                       <div className="flex items-center gap-2 mb-1.5">
-                        <span className="text-xs font-black text-slate-900 bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-lg">v2.8.1</span>
-                        <span className="text-[10px] text-slate-400 font-bold">03.07.2026</span>
+                        <span className="text-xs font-black text-slate-900 bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-lg">v2.9.0</span>
+                        <span className="text-[10px] text-slate-400 font-bold">07.07.2026</span>
                         <span className="text-[10px] bg-emerald-50 text-emerald-700 font-bold px-1.5 py-0.5 rounded-md">Текущая версия</span>
+                      </div>
+                      <div className="text-xs font-bold text-slate-800 mb-1">
+                        Глубокий аудит кода, защита циклов рендеринга и повышение отказоустойчивости API
+                      </div>
+                      <ul className="text-[11px] text-slate-600 space-y-1 list-disc pl-4 leading-relaxed">
+                        <li><strong>Полный аудит и стабилизация React-компонентов:</strong> Оптимизированы и заблокированы потенциально нестабильные циклы обновления состояния, очищены неиспользуемые подписки и защищены хуки эффектов.</li>
+                        <li><strong>Полнофункциональное тестирование разделов:</strong> Проверен весь логический цикл от генерации контента и SEO-оптимизации до проверки орфографии и симуляции офлайн-режима.</li>
+                        <li><strong>Усиление безопасности API:</strong> Внедрены защитные таймауты и улучшена логика ленивой инициализации ключей для бесперебойной интеграции с Gemini API и сервисами Яндекса.</li>
+                        <li><strong>Кастомизация сборщиков:</strong> Настроены параметры версионирования для синхронных OTA-обновлений и macOS дистрибутивов.</li>
+                      </ul>
+                    </div>
+
+                    {/* v2.8.1 */}
+                    <div className="relative pl-6 pb-4 border-l-2 border-indigo-100">
+                      <div className="absolute -left-[7px] top-1.5 w-3.5 h-3.5 rounded-full bg-slate-400 border-2 border-white shadow-sm" />
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <span className="text-xs font-black text-slate-700 bg-slate-100 px-2 py-0.5 rounded-lg">v2.8.1</span>
+                        <span className="text-[10px] text-slate-400 font-bold">03.07.2026</span>
                       </div>
                       <div className="text-xs font-bold text-slate-800 mb-1">
                         Автосинхронизация с GitHub и автоматические OTA-обновления Mac

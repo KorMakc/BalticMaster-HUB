@@ -66,7 +66,7 @@ if (fs.existsSync(iconSource)) {
 console.log("Step 3: Creating desktop package.json...");
 const packageJson = {
   name: "baltic-master-zen",
-  version: "2.8.1",
+  version: "2.9.0",
   description: "Baltic Master Zen - Автоматизация SEO и генерация контента",
   main: "main.cjs",
   author: "Baltic Master Service",

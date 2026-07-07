@@ -752,14 +752,14 @@ app.get("/api/health", (req, res) => {
 
 app.get("/api/check-update", (req, res) => {
   res.json({
-    latestVersion: "2.8.1",
+    latestVersion: "2.9.0",
     minCompatibleVersion: "2.0.0",
-    releaseDate: "2026-07-03",
+    releaseDate: "2026-07-07",
     changelog: [
-      "Глубокий ИИ-анализ орфографии, водности, стиля и выявление роботизированного почерка (клише) через Google Gemini API",
-      "Интеллектуальное очеловечивание (Humanizer) текстов статей с автоматической очисткой от лишнего форматирования (*, **, ###) для безупречной публикации в Дзене",
-      "Прямая поддержка OTA-обновлений для macOS: новые версии записываются напрямую в файл baltic_master_zen.html на жестком диске",
-      "Оптимизированный серверный сборщик macOS-приложений на лету с очисткой устаревшего кэша и поддержкой Apple Silicon"
+      "Комплексный аудит и оптимизация исходного кода: устранены мелкие дефекты рендеринга и защищены критические циклы обновления React",
+      "Ускоренный двунаправленный механизм синхронизации с GitHub и раздачи обновлений OTA",
+      "Интерактивные индикаторы статуса API и оптимизированное время ожидания для бесперебойной работы ИИ-модулей",
+      "Полная поддержка раздельного скачивания macOS-архива для высокоскоростного развертывания"
     ],
     downloadUrl: "/api/download-offline-html"
   });
@@ -820,14 +820,14 @@ app.post("/api/github-sync", async (req, res) => {
 
     // 2. Prepare the update.json content dynamically
     const updateInfo = {
-      latestVersion: "2.8.1",
+      latestVersion: "2.9.0",
       minCompatibleVersion: "2.0.0",
       releaseDate: new Date().toISOString().split("T")[0],
       changelog: [
-        "Глубокий ИИ-анализ орфографии, водности, стиля и выявление роботизированного почерка (клише) через Google Gemini API",
-        "Интеллектуальное очеловечивание (Humanizer) текстов статей с автоматической очисткой от лишнего форматирования (*, **, ###) для безупречной публикации в Дзене",
-        "Прямая поддержка OTA-обновлений для macOS: новые версии записываются напрямую в файл baltic_master_zen.html на жестком диске",
-        "Оптимизированный серверный сборщик macOS-приложений на лету с очисткой устаревшего кэша и поддержкой Apple Silicon"
+        "Комплексный аудит и оптимизация исходного кода: устранены мелкие дефекты рендеринга и защищены критические циклы обновления React",
+        "Ускоренный двунаправленный механизм синхронизации с GitHub и раздачи обновлений OTA",
+        "Интерактивные индикаторы статуса API и оптимизированное время ожидания для бесперебойной работы ИИ-модулей",
+        "Полная поддержка раздельного скачивания macOS-архива для высокоскоростного развертывания"
       ],
       downloadUrl: targetHtmlDownloadUrl
     };
@@ -947,7 +947,7 @@ app.post("/api/github-sync", async (req, res) => {
 
     // 5. Push baltic_master_zen.html
     console.log("Pushing baltic_master_zen.html to GitHub...");
-    await pushToGithubWithRetry("baltic_master_zen.html", htmlContent, `Release v2.8.1 (Auto-build from AI Studio)`);
+    await pushToGithubWithRetry("baltic_master_zen.html", htmlContent, `Release v2.9.0 (Auto-build from AI Studio)`);
 
     // 6. Wait a brief moment to allow GitHub to update the head ref and stabilize
     console.log("Waiting 2 seconds to allow GitHub's database to stabilize before next commit...");
@@ -955,7 +955,7 @@ app.post("/api/github-sync", async (req, res) => {
 
     // 7. Push update.json
     console.log("Pushing update.json to GitHub...");
-    await pushToGithubWithRetry("update.json", jsonContent, `Update update.json for v2.8.1`);
+    await pushToGithubWithRetry("update.json", jsonContent, `Update update.json for v2.9.0`);
 
     console.log("GitHub sync completed successfully!");
 
@@ -964,7 +964,7 @@ app.post("/api/github-sync", async (req, res) => {
       message: "Синхронизация успешно завершена! Файлы залиты на GitHub.",
       manifestUrl: targetManifestUrl,
       htmlUrl: targetHtmlDownloadUrl,
-      version: "2.8.1"
+      version: "2.9.0"
     });
 
   } catch (error: any) {
