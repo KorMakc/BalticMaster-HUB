@@ -419,7 +419,26 @@ export default function App() {
       // Load app version
       const savedVersion = localStorage.getItem("bm26_app_version");
       if (savedVersion) {
-        setAppVersion(savedVersion);
+        const bundledVersion = "2.9.0";
+        const isNewerVersion = (newVer: string, oldVer: string): boolean => {
+          const newParts = newVer.split('.').map(Number);
+          const oldParts = oldVer.split('.').map(Number);
+          for (let i = 0; i < Math.max(newParts.length, oldParts.length); i++) {
+            const n = newParts[i] || 0;
+            const o = oldParts[i] || 0;
+            if (n > o) return true;
+            if (n < o) return false;
+          }
+          return false;
+        };
+        if (isNewerVersion(savedVersion, bundledVersion)) {
+          setAppVersion(savedVersion);
+        } else {
+          localStorage.setItem("bm26_app_version", bundledVersion);
+          setAppVersion(bundledVersion);
+        }
+      } else {
+        localStorage.setItem("bm26_app_version", "2.9.0");
       }
 
       // Load custom API server URL

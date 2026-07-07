@@ -28,8 +28,23 @@
               getReq.onsuccess = function() {
                 var cachedData = getReq.result;
                 if (cachedData && cachedData.html) {
-                  var currentVersion = '2.8.0';
-                  if (cachedData.version !== currentVersion && !sessionStorage.getItem('bootloader_skipped')) {
+                  var currentVersion = '2.9.0';
+                  
+                  function isNewer(newVer, oldVer) {
+                    if (!newVer) return false;
+                    if (!oldVer) return true;
+                    var newParts = newVer.split('.').map(Number);
+                    var oldParts = oldVer.split('.').map(Number);
+                    for (var i = 0; i < Math.max(newParts.length, oldParts.length); i++) {
+                      var n = newParts[i] || 0;
+                      var o = oldParts[i] || 0;
+                      if (n > o) return true;
+                      if (n < o) return false;
+                    }
+                    return false;
+                  }
+
+                  if (isNewer(cachedData.version, currentVersion) && !sessionStorage.getItem('bootloader_skipped')) {
                     console.log('Bootloader: Loading cached version v' + cachedData.version);
                     sessionStorage.setItem('bootloader_skipped', 'true');
                     document.open();
