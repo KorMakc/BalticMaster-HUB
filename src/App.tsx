@@ -128,6 +128,9 @@ export default function App() {
     showToast("Скачивание частей запущено. Пожалуйста, подождите.", "success");
   };
 
+  // Tab subdivision state for Articles 1-40
+  const [articlesTabSubSection, setArticlesTabSubSection] = useState<"part1" | "part2">("part1");
+
   // Search & Filter state for Articles 1-20
   const [searchQuery1, setSearchQuery1] = useState<string>("");
   const [selectedType1, setSelectedType1] = useState<string>("all");
@@ -165,6 +168,8 @@ export default function App() {
   const [needsReload, setNeedsReload] = useState<boolean>(false);
   const [customApiUrl, setCustomApiUrl] = useState<string>("");
   const [customUpdateManifestUrl, setCustomUpdateManifestUrl] = useState<string>("");
+  const [showAdvancedUpdateSettings, setShowAdvancedUpdateSettings] = useState<boolean>(false);
+  const [autoUpdateEnabled, setAutoUpdateEnabled] = useState<boolean>(true);
 
   // GitHub Sync states
   const [githubToken, setGithubToken] = useState<string>("SYSTEM_TOKEN_PLACEHOLDER");
@@ -427,6 +432,12 @@ export default function App() {
       const savedUpdateManifestUrl = localStorage.getItem("baltic_master_update_manifest_url");
       if (savedUpdateManifestUrl) {
         setCustomUpdateManifestUrl(savedUpdateManifestUrl);
+      }
+
+      // Load auto update enabled setting
+      const savedAutoUpdate = localStorage.getItem("baltic_master_auto_update_enabled");
+      if (savedAutoUpdate !== null) {
+        setAutoUpdateEnabled(savedAutoUpdate === "true");
       }
 
       // Load GitHub Sync settings
@@ -1007,6 +1018,69 @@ export default function App() {
       showToast("Сервер обновлений недоступен", "danger");
     }
   };
+
+  // Auto-check for updates on startup and automatically install if enabled
+  useEffect(() => {
+    const isElectron = !!(window as any).electronAPI;
+    const triggerAutoUpdate = async () => {
+      if (!autoUpdateEnabled) return;
+      try {
+        const updateUrl = customUpdateManifestUrl.trim() !== ""
+          ? customUpdateManifestUrl.trim()
+          : getApiUrl("/api/check-update");
+
+        const res = await fetch(updateUrl);
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        if (data.latestVersion && data.latestVersion !== appVersion) {
+          console.log(`Auto-updater: Found newer version v${data.latestVersion}. Initiating automatic download & install...`);
+          setUpdateInfo(data);
+          setUpdateStatus("downloading");
+          
+          const downloadUrl = getApiUrl(data.downloadUrl || "/api/download-offline-html");
+          const dlRes = await fetch(downloadUrl);
+          if (!dlRes.ok) {
+            setUpdateStatus("error");
+            setUpdateError("Ошибка автоматического скачивания файла обновления");
+            return;
+          }
+          const htmlText = await dlRes.text();
+
+          if (isElectron && (window as any).electronAPI.updateAppHTML) {
+            const success = await (window as any).electronAPI.updateAppHTML(htmlText);
+            if (success) {
+              localStorage.setItem("bm26_app_version", data.latestVersion);
+              setUpdateStatus("up_to_date");
+              setAppVersion(data.latestVersion);
+              setNeedsReload(true);
+              showToast(`Автоматически установлена новая версия v${data.latestVersion}!`, "success");
+              return;
+            }
+          }
+          
+          await saveHtmlToIndexedDB(htmlText, data.latestVersion);
+          localStorage.setItem("bm26_app_version", data.latestVersion);
+          setUpdateStatus("up_to_date");
+          setAppVersion(data.latestVersion);
+          setNeedsReload(true);
+          showToast(`Автоматически установлено обновление v${data.latestVersion}!`, "success");
+        } else {
+          setUpdateStatus("up_to_date");
+        }
+      } catch (err) {
+        console.error("Auto-updater background error:", err);
+      }
+    };
+
+    // Run automatic silent check-and-install 3 seconds after startup if enabled
+    if (autoUpdateEnabled) {
+      const timer = setTimeout(() => {
+        triggerAutoUpdate();
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [appVersion, customUpdateManifestUrl, autoUpdateEnabled]);
 
   // Handle GitHub sync request
   const handleGithubSync = async () => {
@@ -1757,8 +1831,7 @@ export default function App() {
             <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">МЕНЮ УПРАВЛЕНИЯ</div>
             <nav className="space-y-1">
               {[
-                { id: "t1", label: "Статьи 1–20", icon: BookOpen, accent: false },
-                { id: "t2", label: "Статьи 21–40", icon: BookOpen, accent: false },
+                { id: "t1", label: "База Статей (1–40)", icon: BookOpen, accent: false },
                 { id: "t3", label: "Промты для ИИ", icon: Clipboard, accent: false },
                 { id: "t4", label: "Календарный График", icon: Clock, accent: false },
                 { id: "t5", label: "Статистика & Справка", icon: BarChart2, accent: false },
@@ -1903,128 +1976,156 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 1: ARTICLES 1-20 */}
+          {/* TAB 1: ARTICLES 1-40 */}
           {activeTab === "t1" && (
           <div className="space-y-4">
-            {/* Search & filters */}
-            <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-sm flex flex-col sm:flex-row gap-3 items-center">
-              <div className="relative w-full sm:flex-1">
-                <Search className="w-4 h-4 absolute left-3 top-3.5 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Поиск по статьям 1–20..."
-                  value={searchQuery1}
-                  onChange={(e) => setSearchQuery1(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm transition"
-                />
-              </div>
-              <div className="flex flex-wrap gap-1.5 w-full sm:w-auto">
+            {/* Elegant Subdivision Tabs */}
+            <div className="flex justify-between items-center bg-white rounded-2xl border border-slate-200/80 p-3 shadow-sm flex-wrap gap-2">
+              <div className="bg-slate-100 p-1 rounded-xl flex gap-1">
                 <button
-                  onClick={() => setSelectedType1("all")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                    selectedType1 === "all" ? "bg-blue-600 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-600"
+                  onClick={() => setArticlesTabSubSection("part1")}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    articlesTabSubSection === "part1" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
-                  Все
+                  <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
+                  Статьи 1–20 (Основные)
                 </button>
-                {articleTypes.map((type) => (
-                  <button
-                    key={type}
-                    onClick={() => setSelectedType1(type)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                      selectedType1 === type ? "bg-blue-600 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-600"
-                    }`}
-                  >
-                    {type}
-                  </button>
-                ))}
-              </div>
-              <button
-                onClick={handleImportFromClipboard}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-sm shrink-0 cursor-pointer"
-              >
-                <Clipboard className="w-4 h-4" />
-                Импорт текста из буфера
-              </button>
-            </div>
-
-            {/* List of articles */}
-            {filteredArticles1.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500">
-                <AlertCircle className="w-10 h-10 mx-auto text-slate-300 mb-2" />
-                <p className="text-sm font-semibold">По вашему запросу ничего не найдено</p>
-              </div>
-            ) : (
-              <div className="grid gap-4">
-                {filteredArticles1.map((art) => (
-                  <ArticleCard
-                    key={art.id}
-                    article={art}
-                    isPublished={publishedIds.includes(art.id)}
-                    onTogglePublished={() => togglePublished(art.id)}
-                    onCopyBody={() => copyToClipboard(art.body.replace(/<[^>]*>/g, ""), "Текст статьи скопирован")}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* TAB 2: ARTICLES 21-40 */}
-        {activeTab === "t2" && (
-          <div className="space-y-4">
-            {/* Search & filters */}
-            <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-sm flex flex-col sm:flex-row gap-3 items-center">
-              <div className="relative w-full sm:flex-1">
-                <Search className="w-4 h-4 absolute left-3 top-3.5 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Поиск по статьям 21–40..."
-                  value={searchQuery2}
-                  onChange={(e) => setSearchQuery2(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm transition"
-                />
-              </div>
-              <div className="flex flex-wrap gap-1.5 w-full sm:w-auto">
                 <button
-                  onClick={() => setSelectedType2("all")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                    selectedType2 === "all" ? "bg-blue-600 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-600"
+                  onClick={() => setArticlesTabSubSection("part2")}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    articlesTabSubSection === "part2" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
-                  Все
+                  <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
+                  Статьи 21–40 (Спецификации)
                 </button>
-                {articleTypes.map((type) => (
-                  <button
-                    key={type}
-                    onClick={() => setSelectedType2(type)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                      selectedType2 === type ? "bg-blue-600 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-600"
-                    }`}
-                  >
-                    {type}
-                  </button>
-                ))}
               </div>
+
+              {articlesTabSubSection === "part1" && (
+                <button
+                  onClick={handleImportFromClipboard}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-sm cursor-pointer"
+                >
+                  <Clipboard className="w-3.5 h-3.5" />
+                  Импорт из буфера
+                </button>
+              )}
             </div>
 
-            {/* List of articles */}
-            {filteredArticles2.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500">
-                <AlertCircle className="w-10 h-10 mx-auto text-slate-300 mb-2" />
-                <p className="text-sm font-semibold">По вашему запросу ничего не найдено</p>
+            {articlesTabSubSection === "part1" ? (
+              <div className="space-y-4">
+                {/* Search & filters Part 1 */}
+                <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-sm flex flex-col sm:flex-row gap-3 items-center">
+                  <div className="relative w-full sm:flex-1">
+                    <Search className="w-4 h-4 absolute left-3 top-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Поиск по статьям 1–20..."
+                      value={searchQuery1}
+                      onChange={(e) => setSearchQuery1(e.target.value)}
+                      className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm transition"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 w-full sm:w-auto">
+                    <button
+                      onClick={() => setSelectedType1("all")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                        selectedType1 === "all" ? "bg-blue-600 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-600"
+                      }`}
+                    >
+                      Все
+                    </button>
+                    {articleTypes.map((type) => (
+                      <button
+                        key={type}
+                        onClick={() => setSelectedType1(type)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                          selectedType1 === type ? "bg-blue-600 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-600"
+                        }`}
+                      >
+                        {type}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* List of articles Part 1 */}
+                {filteredArticles1.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500">
+                    <AlertCircle className="w-10 h-10 mx-auto text-slate-300 mb-2" />
+                    <p className="text-sm font-semibold">По вашему запросу ничего не найдено</p>
+                  </div>
+                ) : (
+                  <div className="grid gap-4">
+                    {filteredArticles1.map((art) => (
+                      <ArticleCard
+                        key={art.id}
+                        article={art}
+                        isPublished={publishedIds.includes(art.id)}
+                        onTogglePublished={() => togglePublished(art.id)}
+                        onCopyBody={() => copyToClipboard(art.body.replace(/<[^>]*>/g, ""), "Текст статьи скопирован")}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             ) : (
-              <div className="grid gap-4">
-                {filteredArticles2.map((art) => (
-                  <ArticleCard
-                    key={art.id}
-                    article={art}
-                    isPublished={publishedIds.includes(art.id)}
-                    onTogglePublished={() => togglePublished(art.id)}
-                    onCopyBody={() => copyToClipboard(art.body.replace(/<[^>]*>/g, ""), "Текст статьи скопирован")}
-                  />
-                ))}
+              <div className="space-y-4">
+                {/* Search & filters Part 2 */}
+                <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-sm flex flex-col sm:flex-row gap-3 items-center">
+                  <div className="relative w-full sm:flex-1">
+                    <Search className="w-4 h-4 absolute left-3 top-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Поиск по статьям 21–40..."
+                      value={searchQuery2}
+                      onChange={(e) => setSearchQuery2(e.target.value)}
+                      className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm transition"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 w-full sm:w-auto">
+                    <button
+                      onClick={() => setSelectedType2("all")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                        selectedType2 === "all" ? "bg-blue-600 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-600"
+                      }`}
+                    >
+                      Все
+                    </button>
+                    {articleTypes.map((type) => (
+                      <button
+                        key={type}
+                        onClick={() => setSelectedType2(type)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                          selectedType2 === type ? "bg-blue-600 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-600"
+                        }`}
+                      >
+                        {type}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* List of articles Part 2 */}
+                {filteredArticles2.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-500">
+                    <AlertCircle className="w-10 h-10 mx-auto text-slate-300 mb-2" />
+                    <p className="text-sm font-semibold">По вашему запросу ничего не найдено</p>
+                  </div>
+                ) : (
+                  <div className="grid gap-4">
+                    {filteredArticles2.map((art) => (
+                      <ArticleCard
+                        key={art.id}
+                        article={art}
+                        isPublished={publishedIds.includes(art.id)}
+                        onTogglePublished={() => togglePublished(art.id)}
+                        onCopyBody={() => copyToClipboard(art.body.replace(/<[^>]*>/g, ""), "Текст статьи скопирован")}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -2643,7 +2744,7 @@ export default function App() {
                         {/* Week Status Badge */}
                         {isA && isB ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase text-emerald-700 bg-emerald-100/75 px-2 py-0.5 rounded-full">
-                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                             Готово
                           </span>
                         ) : isA || isB ? (
@@ -2741,6 +2842,7 @@ export default function App() {
           </div>
         )}
 
+        {/* TAB 5: BACKSTAGE PANELS / SETTINGS */}
         {activeTab === "t5" && (
           <div className="space-y-6">
             {/* Version Header & Stats */}
@@ -2798,358 +2900,117 @@ export default function App() {
             <div className="grid lg:grid-cols-12 gap-6">
               {/* Left Column: Software Updates, Settings, ROI Calculator */}
               <div className="lg:col-span-7 space-y-6">
-                
                 {/* 1. Software Update System Card */}
-                <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+                <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-6">
                   <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                    <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                      <RefreshCw className={`w-5 h-5 text-indigo-600 ${updateStatus === "checking" ? "animate-spin" : ""}`} />
-                      Система автообновления программы
-                    </h3>
-                    <span className="text-xs font-bold text-slate-500">Текущая версия: v{appVersion}</span>
-                  </div>
-
-                  {/* API Server URL Settings block */}
-                  <div className="p-4 bg-indigo-50/40 rounded-xl border border-indigo-100/60 space-y-3 text-left">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
-                        <Server className="w-4 h-4 text-indigo-600" />
-                        Адрес сборочного ИИ-сервера (API)
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                        <RefreshCw className={`w-5 h-5 text-indigo-600 ${updateStatus === "checking" ? "animate-spin" : ""}`} />
+                        Автосинхронизация и обновления
+                      </h3>
+                      <p className="text-[11px] text-slate-400 mt-0.5">Интеллектуальный контроль целостности macOS-приложения</p>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="bg-slate-100 text-slate-700 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full">
+                        v{appVersion}
                       </span>
-                      {customApiUrl && (
-                        <span className="text-[10px] font-bold text-indigo-600 bg-indigo-100/50 px-2 py-0.5 rounded-full">
-                          Пользовательский URL
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-slate-500 leading-normal">
-                      Для работы ИИ-функций и автообновления на Mac приложение делает запросы к облачному контейнеру. Если сервер обновлений недоступен, скопируйте активный адрес из строки браузера и вставьте сюда.
-                    </p>
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <input
-                        type="text"
-                        placeholder="Например: https://ais-dev-...run.app"
-                        value={customApiUrl}
-                        onChange={(e) => setCustomApiUrl(e.target.value)}
-                        className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800"
-                      />
-                      <div className="flex gap-1.5">
-                        <button
-                          onClick={() => {
-                            const trimmed = customApiUrl.trim();
-                            if (trimmed) {
-                              localStorage.setItem("baltic_master_api_url", trimmed);
-                              showToast("Адрес API-сервера успешно сохранен!", "success");
-                            } else {
-                              localStorage.removeItem("baltic_master_api_url");
-                              showToast("Сброшено к системному адресу по умолчанию.", "info");
-                            }
-                          }}
-                          className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
-                        >
-                          <Save className="w-3.5 h-3.5" />
-                          Применить
-                        </button>
-                        {customApiUrl && (
-                          <button
-                            onClick={() => {
-                              setCustomApiUrl("");
-                              localStorage.removeItem("baltic_master_api_url");
-                              showToast("Сброшено к системному адресу по умолчанию.", "info");
-                            }}
-                            className="px-3 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-bold transition cursor-pointer"
-                          >
-                            Сбросить
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <div className="text-[10px] text-slate-400 font-mono flex flex-wrap items-center gap-1">
-                      <span>Активное подключение:</span>
-                      <span className="text-indigo-600 font-bold select-all break-all">{getCurrentlyResolvedApiUrl()}</span>
-                    </div>
-                  </div>
-
-                  {/* GitHub/Gist Update Manifest Settings block */}
-                  <div className="p-4 bg-emerald-50/40 rounded-xl border border-emerald-100/60 space-y-3 text-left">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
-                        <Github className="w-4 h-4 text-emerald-600" />
-                        Проверка обновлений через GitHub / Gist (Публичный)
-                      </span>
-                      {customUpdateManifestUrl && (
-                        <span className="text-[10px] font-bold text-emerald-600 bg-emerald-100/50 px-2 py-0.5 rounded-full">
-                          GitHub Активен
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-slate-500 leading-normal">
-                      Для бесперебойного обновления macOS-приложения без использования промежуточных серверов, вы можете разместить JSON-манифест обновлений и сам файл в публичном репозитории GitHub или Gist.
-                    </p>
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <input
-                        type="text"
-                        placeholder="Например: https://raw.githubusercontent.com/KorMakc/baltic-master-zen/main/update.json"
-                        value={customUpdateManifestUrl}
-                        onChange={(e) => setCustomUpdateManifestUrl(e.target.value)}
-                        className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-slate-800"
-                      />
-                      <div className="flex gap-1.5">
-                        <button
-                          onClick={() => {
-                            const trimmed = customUpdateManifestUrl.trim();
-                            if (trimmed) {
-                              localStorage.setItem("baltic_master_update_manifest_url", trimmed);
-                              showToast("URL манифеста обновлений успешно сохранен!", "success");
-                            } else {
-                              localStorage.removeItem("baltic_master_update_manifest_url");
-                              showToast("Сброшено к системному серверу обновлений.", "info");
-                            }
-                          }}
-                          className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
-                        >
-                          <Save className="w-3.5 h-3.5" />
-                          Применить
-                        </button>
-                        {customUpdateManifestUrl && (
-                          <button
-                            onClick={() => {
-                              setCustomUpdateManifestUrl("");
-                              localStorage.removeItem("baltic_master_update_manifest_url");
-                              showToast("Сброшено к системному серверу обновлений.", "info");
-                            }}
-                            className="px-3 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-bold transition cursor-pointer"
-                          >
-                            Сбросить
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <div className="text-[10px] text-slate-400 font-mono flex flex-wrap items-center gap-1">
-                      <span>Режим проверки:</span>
-                      <span className="text-emerald-700 font-bold">
-                        {customUpdateManifestUrl ? "Публичный GitHub (Рекомендуется)" : "Локальный API сервер"}
+                      <span className="flex items-center gap-1 text-[9px] font-bold text-emerald-600">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                        Подключено к облаку
                       </span>
                     </div>
                   </div>
 
-                  {/* Automated GitHub Synchronization Panel */}
-                  <div className="p-4 bg-indigo-50/45 rounded-xl border border-indigo-100/60 space-y-4 text-left">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
-                        <Github className="w-4 h-4 text-indigo-600" />
-                        Автоматическая синхронизация с вашим GitHub
-                      </span>
-                      <span className="text-[10px] font-bold text-indigo-600 bg-indigo-100/50 px-2 py-0.5 rounded-full">
-                        Один клик
-                      </span>
+                  {/* Auto updates toggle switch */}
+                  <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 flex items-start gap-3 justify-between">
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5 cursor-pointer select-none">
+                        Автоматически проверять и устанавливать новые версии
+                      </label>
+                      <p className="text-[10px] text-slate-500 leading-normal">
+                        Программа сама свяжется с сервером дистрибуции при запуске, скачает патчи и установит их в фоновом режиме на Mac.
+                      </p>
                     </div>
-                    
-                    <p className="text-[11px] text-slate-500 leading-normal">
-                      Скомпилируйте приложение со встроенным адресом обновлений и отправьте его напрямую в ваш репозиторий GitHub. Программа на Mac сама считает этот репозиторий и мгновенно обновится!
-                    </p>
-
-                    <div className="space-y-2.5">
-                      {/* GitHub PAT Input */}
-                      <div>
-                        <label className="block text-[10px] font-bold text-slate-600 mb-1">
-                          1. Ваш GitHub Personal Access Token (PAT)
-                        </label>
-                        <input
-                          type={githubToken === "SYSTEM_TOKEN_PLACEHOLDER" ? "text" : "password"}
-                          placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxx"
-                          value={githubToken === "SYSTEM_TOKEN_PLACEHOLDER" ? "•••••••• (Предустановлен)" : githubToken}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setGithubToken(val);
-                          }}
-                          onFocus={(e) => {
-                            if (githubToken === "SYSTEM_TOKEN_PLACEHOLDER") {
-                              setGithubToken("");
-                            }
-                          }}
-                          onBlur={(e) => {
-                            if (!githubToken.trim()) {
-                              setGithubToken("SYSTEM_TOKEN_PLACEHOLDER");
-                            }
-                          }}
-                          className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800 font-mono"
-                        />
-                        <p className="text-[9px] text-slate-400 mt-0.5">
-                          Создайте токен с доступом к репозиториям на{" "}
-                          <a
-                            href="https://github.com/settings/tokens"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-indigo-600 underline hover:text-indigo-700"
-                          >
-                            github.com/settings/tokens
-                          </a>{" "}
-                          (выберите область `repo`).
-                        </p>
-                      </div>
-
-                      {/* Repo URL Input */}
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        <div className="sm:col-span-2">
-                          <label className="block text-[10px] font-bold text-slate-600 mb-1">
-                            2. Репозиторий GitHub (Ссылка или owner/repo)
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="https://github.com/KorMakc/baltic-master-zen"
-                            value={githubRepoUrl}
-                            onChange={(e) => setGithubRepoUrl(e.target.value)}
-                            className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-600 mb-1">
-                            3. Ветка
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="main"
-                            value={githubBranch}
-                            onChange={(e) => setGithubBranch(e.target.value)}
-                            className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800 font-mono"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Sync action triggers */}
-                    <div className="pt-2 flex flex-col gap-2">
-                      <button
-                        onClick={handleGithubSync}
-                        disabled={isSyncing}
-                        className={`w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm ${
-                          isSyncing ? "opacity-70 cursor-not-allowed" : ""
+                    <button
+                      onClick={() => {
+                        const newVal = !autoUpdateEnabled;
+                        setAutoUpdateEnabled(newVal);
+                        localStorage.setItem("baltic_master_auto_update_enabled", String(newVal));
+                        showToast(newVal ? "Автоматические фоновые обновления включены!" : "Автоматические обновления отключены. Проверка переведена в ручной режим.", "info");
+                      }}
+                      className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                        autoUpdateEnabled ? "bg-indigo-600" : "bg-slate-200"
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                          autoUpdateEnabled ? "translate-x-5" : "translate-x-0"
                         }`}
-                      >
-                        {isSyncing ? (
-                          <>
-                            <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                            Синхронизация и компиляция...
-                          </>
-                        ) : (
-                          <>
-                            <Github className="w-3.5 h-3.5" />
-                            Собрать и залить на GitHub
-                          </>
-                        )}
-                      </button>
-
-                      {/* Sync logs and status */}
-                      {syncMessage && (
-                        <div className={`p-2.5 rounded-lg text-[10px] font-mono leading-relaxed border ${
-                          syncStatus === "success" 
-                            ? "bg-emerald-50 text-emerald-800 border-emerald-100" 
-                            : syncStatus === "error" 
-                              ? "bg-rose-50 text-rose-800 border-rose-100" 
-                              : "bg-slate-50 text-slate-600 border-slate-100"
-                        }`}>
-                          <div className="font-bold mb-1">
-                            {syncStatus === "success" ? "✓ УСПЕХ:" : syncStatus === "error" ? "✗ ОШИБКА:" : "ℹ СТАТУС:"}
-                          </div>
-                          <div>{syncMessage}</div>
-                          {syncStatus === "success" && (
-                            <div className="mt-1 text-slate-500 text-[9px] leading-tight">
-                              Адрес манифеста обновлений автоматически прописан в настройках программы! Ваша программа на Mac теперь автоматически будет использовать эту ссылку.
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                      />
+                    </button>
                   </div>
 
-                  <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 space-y-3">
-                    {updateStatus === "idle" && (
-                      <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-                        <div className="text-xs text-slate-500">
-                          Проверьте наличие критических патчей и новых модулей на официальном сервере дистрибуции.
-                        </div>
-                        <button
-                          onClick={handleCheckUpdates}
-                          className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition shadow-sm cursor-pointer"
-                        >
-                          <RefreshCw className="w-3.5 h-3.5" />
-                          Проверить обновления
-                        </button>
-                      </div>
-                    )}
-
+                  {/* Dynamic Status Blocks */}
+                  <div className="space-y-4">
                     {updateStatus === "checking" && (
-                      <div className="flex items-center gap-3 py-1">
-                        <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-                        <span className="text-xs text-slate-600 font-medium">Соединение с репозиторием обновлений Балтик Мастер...</span>
-                      </div>
-                    )}
-
-                    {updateStatus === "available" && updateInfo && (
-                      <div className="space-y-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100/50 pb-2">
-                          <span className="text-xs font-bold text-emerald-600 flex items-center gap-1">
-                            <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                            Доступно обновление до версии v{updateInfo.latestVersion}!
-                          </span>
-                          <button
-                            onClick={handleInstallUpdate}
-                            className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-extrabold transition shadow-sm cursor-pointer"
-                          >
-                            <Download className="w-3 h-3 animate-bounce" />
-                            Установить v{updateInfo.latestVersion}
-                          </button>
-                        </div>
-                        <div className="space-y-1.5">
-                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Список улучшений в сборке:</div>
-                          <ul className="space-y-1">
-                            {updateInfo.changelog.map((item, idx) => (
-                              <li key={idx} className="text-xs text-slate-600 flex items-start gap-1.5">
-                                <span className="text-indigo-500 font-bold mt-0.5">•</span>
-                                <span>{item}</span>
-                              </li>
-                            ))}
-                          </ul>
+                      <div className="p-5 bg-indigo-50/50 border border-indigo-100 rounded-xl space-y-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                          <div>
+                            <div className="text-xs font-bold text-indigo-950">Поиск новых компонентов...</div>
+                            <p className="text-[10px] text-slate-500 mt-0.5">Проверка манифеста сборки и целостности исполняемых файлов</p>
+                          </div>
                         </div>
                       </div>
                     )}
 
                     {updateStatus === "downloading" && (
-                      <div className="space-y-2 py-1">
-                        <div className="flex items-center justify-between text-xs font-bold text-indigo-600">
-                          <span>Загрузка и верификация дистрибутива...</span>
-                          <span className="animate-pulse">Установка</span>
+                      <div className="p-5 bg-indigo-50/50 border border-indigo-100 rounded-xl space-y-3.5">
+                        <div className="flex items-center justify-between text-xs font-bold text-indigo-950">
+                          <span className="flex items-center gap-1.5">
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                            Загрузка и верификация дистрибутива на macOS...
+                          </span>
+                          <span className="text-indigo-600 animate-pulse">Установка</span>
                         </div>
-                        <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                        <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
                           <div className="bg-indigo-600 h-full animate-[loading_2s_ease-in-out_infinite]" style={{ width: "80%" }}></div>
                         </div>
+                        <p className="text-[10px] text-slate-500 leading-normal">
+                          Пожалуйста, не закрывайте приложение. По завершении скачивания все обновленные шаблоны будут применены автоматически.
+                        </p>
                       </div>
                     )}
 
                     {updateStatus === "up_to_date" && (
-                      <div className="space-y-3">
+                      <div className="p-5 bg-emerald-50/40 border border-emerald-100 rounded-xl space-y-4">
                         <div className="flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-2">
-                            <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
-                              <Check className="w-3.5 h-3.5" />
+                          <div className="flex items-start gap-2.5">
+                            <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                              <Check className="w-3.5 h-3.5 font-bold" />
                             </span>
-                            <span className="text-xs text-slate-600 font-medium">Ваша программа обновлена до актуальной версии v{appVersion}!</span>
+                            <div>
+                              <div className="text-xs font-bold text-emerald-950">Все файлы синхронизированы</div>
+                              <p className="text-[10px] text-slate-600 mt-0.5">
+                                У вас установлена актуальная лицензионная версия <span className="font-semibold text-slate-800">v{appVersion}</span>. База регламентов и шаблонов обновлена.
+                              </p>
+                            </div>
                           </div>
                           {!needsReload && (
                             <button
                               onClick={handleCheckUpdates}
-                              className="text-indigo-600 hover:text-indigo-700 text-xs font-bold transition"
+                              className="text-indigo-600 hover:text-indigo-700 text-xs font-bold transition whitespace-nowrap"
                             >
-                              Проверить повторно
+                              Проверить сейчас
                             </button>
                           )}
                         </div>
+
                         {needsReload && (
-                          <div className="pt-2.5 border-t border-slate-200/60 flex flex-col sm:flex-row items-center justify-between gap-3">
+                          <div className="pt-3 border-t border-emerald-100/60 flex flex-col sm:flex-row items-center justify-between gap-3">
                             <span className="text-xs text-amber-600 font-bold flex items-center gap-1.5">
                               <AlertCircle className="w-4 h-4 text-amber-500 animate-pulse" />
-                              Требуется перезагрузка для активации версии v{appVersion}
+                              Требуется перезапуск для активации v{appVersion}
                             </span>
                             <button
                               onClick={() => window.location.reload()}
@@ -3163,52 +3024,330 @@ export default function App() {
                       </div>
                     )}
 
+                    {updateStatus === "available" && updateInfo && (
+                      <div className="p-5 bg-emerald-50/50 border border-emerald-100/80 rounded-xl space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-emerald-100/50 pb-3">
+                          <div className="space-y-0.5">
+                            <span className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                              <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" />
+                              Доступна новая сборка v{updateInfo.latestVersion}!
+                            </span>
+                            <p className="text-[10px] text-slate-500">Система готова к автоматической установке на macOS</p>
+                          </div>
+                          <button
+                            onClick={handleInstallUpdate}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition shadow-sm cursor-pointer hover:scale-[1.02]"
+                          >
+                            <Download className="w-3.5 h-3.5 animate-bounce" />
+                            Установить обновление
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Список изменений в новой версии:</div>
+                          <ul className="space-y-1">
+                            {updateInfo.changelog.map((item, idx) => (
+                              <li key={idx} className="text-xs text-slate-600 flex items-start gap-1.5">
+                                <span className="text-indigo-500 font-bold mt-0.5">•</span>
+                                <span>{item}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    )}
+
                     {updateStatus === "error" && (
-                      <div className="space-y-4">
-                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3.5 bg-rose-50 border border-rose-100 rounded-xl">
+                      <div className="p-5 bg-rose-50 border border-rose-100 rounded-xl space-y-4">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                           <div className="flex items-start gap-2.5">
-                            <span className="w-5 h-5 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center shrink-0 mt-0.5 sm:mt-0">
+                            <span className="w-5 h-5 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
                               <AlertCircle className="w-3.5 h-3.5" />
                             </span>
                             <div>
-                              <div className="text-xs font-bold text-rose-800">Сервер обновлений недоступен</div>
-                              <p className="text-[10px] text-rose-700 mt-0.5">
+                              <div className="text-xs font-bold text-rose-800 font-mono">Сервер синхронизации недоступен</div>
+                              <p className="text-[10px] text-rose-700 mt-0.5 leading-normal">
                                 {updateError || "Не удалось связаться со сборочным сервером. Проверьте подключение к Интернету."}
                               </p>
                             </div>
                           </div>
                           <button
                             onClick={handleCheckUpdates}
-                            className="w-full sm:w-auto shrink-0 inline-flex items-center justify-center gap-1 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[11px] font-bold transition shadow-sm cursor-pointer"
+                            className="w-full sm:w-auto shrink-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition shadow-sm cursor-pointer"
                           >
                             <RefreshCw className="w-3 h-3" />
-                            Повторить попытку
+                            Повторить сейчас
                           </button>
                         </div>
+                      </div>
+                    )}
 
-                        <div className="p-4 bg-slate-100/70 border border-slate-200/50 rounded-xl space-y-3">
-                          <div className="text-xs text-slate-700 font-bold">Ручное скачивание дистрибутивов:</div>
-                          <p className="text-[11px] text-slate-500 leading-relaxed">
-                            Если встроенное обновление недоступно из локального приложения, вы можете вручную скачать свежую сборку напрямую с официального сервера:
+                    {updateStatus === "idle" && (
+                      <div className="p-5 bg-slate-50 rounded-xl border border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+                        <div className="space-y-0.5 text-center sm:text-left">
+                          <div className="text-xs font-bold text-slate-700">Последняя проверка: только что</div>
+                          <p className="text-[10px] text-slate-500">Система автообновлений активна и работает в штатном режиме</p>
+                        </div>
+                        <button
+                          onClick={handleCheckUpdates}
+                          className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          Проверить сейчас
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Redesigned/Streamlined collapsible developer panel */}
+                  <div className="border-t border-slate-100 pt-4">
+                    <button
+                      onClick={() => setShowAdvancedUpdateSettings(!showAdvancedUpdateSettings)}
+                      className="w-full flex items-center justify-between text-xs font-bold text-slate-500 hover:text-slate-800 transition py-1 cursor-pointer"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Settings className="w-3.5 h-3.5" />
+                        Параметры разработчика (API и GitHub)
+                      </span>
+                      {showAdvancedUpdateSettings ? <ChevronDown className="w-4 h-4 transform rotate-180 transition" /> : <ChevronDown className="w-4 h-4 transition" />}
+                    </button>
+
+                    {showAdvancedUpdateSettings && (
+                      <div className="mt-4 space-y-4 border-t border-slate-100/80 pt-4 animate-fadeIn">
+                        {/* API Server URL Settings block */}
+                        <div className="p-4 bg-indigo-50/30 rounded-xl border border-indigo-100/50 space-y-3 text-left">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                              <Server className="w-4 h-4 text-indigo-600" />
+                              Адрес сборочного ИИ-сервера (API)
+                            </span>
+                            {customApiUrl && (
+                              <span className="text-[9px] font-bold text-indigo-600 bg-indigo-100/50 px-2 py-0.5 rounded-full">
+                                Пользовательский URL
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-slate-500 leading-normal">
+                            Используется для запроса ИИ-функций и получения патчей. Если сервер недоступен, введите локальный адрес облачного контейнера.
+                          </p>
+                          <div className="flex flex-col sm:flex-row gap-2">
+                            <input
+                              type="text"
+                              placeholder="Например: https://ais-dev-...run.app"
+                              value={customApiUrl}
+                              onChange={(e) => setCustomApiUrl(e.target.value)}
+                              className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800"
+                            />
+                            <div className="flex gap-1.5">
+                              <button
+                                onClick={() => {
+                                  const trimmed = customApiUrl.trim();
+                                  if (trimmed) {
+                                    localStorage.setItem("baltic_master_api_url", trimmed);
+                                    showToast("Адрес API-сервера успешно сохранен!", "success");
+                                  } else {
+                                    localStorage.removeItem("baltic_master_api_url");
+                                    showToast("Сброшено к системному адресу по умолчанию.", "info");
+                                  }
+                                }}
+                                className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                              >
+                                <Save className="w-3.5 h-3.5" />
+                                Применить
+                              </button>
+                              {customApiUrl && (
+                                <button
+                                  onClick={() => {
+                                    setCustomApiUrl("");
+                                    localStorage.removeItem("baltic_master_api_url");
+                                    showToast("Сброшено к системному адресу по умолчанию.", "info");
+                                  }}
+                                  className="px-3 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-bold transition cursor-pointer"
+                                >
+                                  Сбросить
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="text-[9px] text-slate-400 font-mono flex flex-wrap items-center gap-1">
+                            <span>Активное подключение:</span>
+                            <span className="text-indigo-600 font-bold select-all break-all">{getCurrentlyResolvedApiUrl()}</span>
+                          </div>
+                        </div>
+
+                        {/* GitHub/Gist Update Manifest Settings block */}
+                        <div className="p-4 bg-emerald-50/30 rounded-xl border border-emerald-100/50 space-y-3 text-left">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                              <Github className="w-4 h-4 text-emerald-600" />
+                              Ссылка на JSON-манифест обновлений
+                            </span>
+                            {customUpdateManifestUrl && (
+                              <span className="text-[9px] font-bold text-emerald-600 bg-emerald-100/50 px-2 py-0.5 rounded-full">
+                                GitHub Активен
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-slate-500 leading-normal">
+                            Позволяет считывать информацию о версиях и файл `baltic_master_zen.html` напрямую из публичного репозитория GitHub или Gist.
+                          </p>
+                          <div className="flex flex-col sm:flex-row gap-2">
+                            <input
+                              type="text"
+                              placeholder="Например: https://raw.githubusercontent.com/KorMakc/baltic-master-zen/main/update.json"
+                              value={customUpdateManifestUrl}
+                              onChange={(e) => setCustomUpdateManifestUrl(e.target.value)}
+                              className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-slate-800"
+                            />
+                            <div className="flex gap-1.5">
+                              <button
+                                onClick={() => {
+                                  const trimmed = customUpdateManifestUrl.trim();
+                                  if (trimmed) {
+                                    localStorage.setItem("baltic_master_update_manifest_url", trimmed);
+                                    showToast("URL манифеста обновлений успешно сохранен!", "success");
+                                  } else {
+                                    localStorage.removeItem("baltic_master_update_manifest_url");
+                                    showToast("Сброшено к системному серверу обновлений.", "info");
+                                  }
+                                }}
+                                className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                              >
+                                <Save className="w-3.5 h-3.5" />
+                                Применить
+                              </button>
+                              {customUpdateManifestUrl && (
+                                <button
+                                  onClick={() => {
+                                    setCustomUpdateManifestUrl("");
+                                    localStorage.removeItem("baltic_master_update_manifest_url");
+                                    showToast("Сброшено к системному серверу обновлений.", "info");
+                                  }}
+                                  className="px-3 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-bold transition cursor-pointer"
+                                >
+                                  Сбросить
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="text-[9px] text-slate-400 font-mono">
+                            Режим: <span className="text-emerald-700 font-bold">{customUpdateManifestUrl ? "Публичный GitHub" : "Локальный API сервер"}</span>
+                          </div>
+                        </div>
+
+                        {/* Automated GitHub Synchronization Panel */}
+                        <div className="p-4 bg-indigo-50/30 rounded-xl border border-indigo-100/50 space-y-4 text-left">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                              <Github className="w-4 h-4 text-indigo-600" />
+                              Автоматическая компиляция и синхронизация с GitHub
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-500 leading-normal">
+                            Позволяет автоматически собрать проект с прошитым адресом обновлений и опубликовать его в ваш репозиторий GitHub. Программа на Mac сама считает этот репозиторий и мгновенно обновится.
+                          </p>
+
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-[9px] font-bold text-slate-600 mb-1">
+                                1. GitHub Personal Access Token (PAT)
+                              </label>
+                              <input
+                                type={githubToken === "SYSTEM_TOKEN_PLACEHOLDER" ? "text" : "password"}
+                                placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxx"
+                                value={githubToken === "SYSTEM_TOKEN_PLACEHOLDER" ? "•••••••• (Предустановлен)" : githubToken}
+                                onChange={(e) => setGithubToken(e.target.value)}
+                                onFocus={(e) => { if (githubToken === "SYSTEM_TOKEN_PLACEHOLDER") setGithubToken(""); }}
+                                onBlur={(e) => { if (!githubToken.trim()) setGithubToken("SYSTEM_TOKEN_PLACEHOLDER"); }}
+                                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800 font-mono"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                              <div className="sm:col-span-2">
+                                <label className="block text-[9px] font-bold text-slate-600 mb-1">
+                                  2. Репозиторий GitHub
+                                </label>
+                                <input
+                                  type="text"
+                                  placeholder="https://github.com/KorMakc/baltic-master-zen"
+                                  value={githubRepoUrl}
+                                  onChange={(e) => setGithubRepoUrl(e.target.value)}
+                                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[9px] font-bold text-slate-600 mb-1">
+                                  3. Ветка
+                                </label>
+                                <input
+                                  type="text"
+                                  placeholder="main"
+                                  value={githubBranch}
+                                  onChange={(e) => setGithubBranch(e.target.value)}
+                                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-800 font-mono"
+                                />
+                              </div>
+                            </div>
+
+                            <button
+                              onClick={handleGithubSync}
+                              disabled={isSyncing}
+                              className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
+                            >
+                              {isSyncing ? (
+                                <>
+                                  <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                  Синхронизация и сборка...
+                                </>
+                              ) : (
+                                <>
+                                  <Github className="w-3.5 h-3.5" />
+                                  Собрать и опубликовать на GitHub
+                                </>
+                              )}
+                            </button>
+
+                            {syncMessage && (
+                              <div className={`p-2.5 rounded-lg text-[9px] font-mono leading-relaxed border ${
+                                syncStatus === "success" 
+                                  ? "bg-emerald-50 text-emerald-800 border-emerald-100" 
+                                  : syncStatus === "error" 
+                                    ? "bg-rose-50 text-rose-800 border-rose-100" 
+                                    : "bg-slate-50 text-slate-600 border-slate-100"
+                              }`}>
+                                <div className="font-bold mb-1">
+                                  {syncStatus === "success" ? "✓ УСПЕХ:" : syncStatus === "error" ? "✗ ОШИБКА:" : "ℹ СТАТУС:"}
+                                </div>
+                                <div>{syncMessage}</div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Direct Download block */}
+                        <div className="p-4 bg-slate-50 rounded-xl border border-slate-200/60 space-y-2">
+                          <div className="text-xs font-bold text-slate-700">Резервные ссылки для скачивания:</div>
+                          <p className="text-[10px] text-slate-500 leading-relaxed">
+                            Если встроенное автоматическое обновление заблокировано брандмауэром Mac, вы всегда можете загрузить дистрибутив вручную:
                           </p>
                           <div className="flex flex-wrap gap-2 pt-1">
                             <a
                               href={getApiUrl("/api/download-mac-zip")}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-extrabold transition shadow-sm"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[10px] font-bold transition shadow-sm"
                             >
-                              <Download className="w-3.5 h-3.5" />
-                              Скачать macOS (.ZIP)
+                              <Download className="w-3 h-3" />
+                              Скачать macOS-сборку (.ZIP)
                             </a>
                             <a
                               href={getApiUrl("/api/download-offline-html")}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-[11px] font-extrabold transition shadow-sm"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-[10px] font-bold transition shadow-sm"
                             >
-                              <Download className="w-3.5 h-3.5" />
-                              Офлайн HTML
+                              <Download className="w-3 h-3" />
+                              Офлайн HTML-файл
                             </a>
                           </div>
                         </div>
