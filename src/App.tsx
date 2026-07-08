@@ -41,11 +41,13 @@ import {
   Sliders,
   Monitor,
   X,
+  XCircle,
   EyeOff,
   Calendar,
   Filter,
   CheckCircle2,
   CheckCircle,
+  ShieldCheck,
   Wifi,
   WifiOff,
   Edit3,
@@ -93,18 +95,46 @@ export default function App() {
     totalSizeMB: string;
     mergeCommand: string;
   } | null>(null);
+  const [macDiagnostics, setMacDiagnostics] = useState<{
+    offlineHtml: { exists: boolean; sizeMB: string; sha256: string };
+    mainZip: { exists: boolean; sizeMB: string; sha256: string };
+    parts: Array<{ name: string; size: number; sizeMB: string }>;
+    assemblyIntegrity: {
+      partsCount: number;
+      combinedSizeMB: string;
+      matchesMainZipSize: boolean;
+      combinedSha256: string;
+      matchesMainZipSha256: boolean;
+      status: "PASS" | "FAIL";
+    };
+    electronBuildInfo: {
+      desktopBuildFolderExists: boolean;
+      electronVersion: string;
+      macOSArch: string;
+    };
+  } | null>(null);
   const [loadingParts, setLoadingParts] = useState<boolean>(false);
 
   const handleOpenMacDownload = async () => {
     setShowMacDownloadModal(true);
     setLoadingParts(true);
     try {
-      const res = await robustFetch(getApiUrl("/api/mac-app-parts-info"));
-      if (!res.ok) {
+      const [resParts, resDiag] = await Promise.all([
+        robustFetch(getApiUrl("/api/mac-app-parts-info")),
+        robustFetch(getApiUrl("/api/mac-diagnostics"))
+      ]);
+
+      if (resParts.ok) {
+        const partsData = await resParts.json();
+        setMacPartsInfo(partsData);
+      } else {
         throw new Error("Не удалось получить информацию о частях.");
       }
-      const data = await res.json();
-      setMacPartsInfo(data);
+
+      if (resDiag.ok) {
+        const diagData = await resDiag.json();
+        setMacDiagnostics(diagData);
+      }
     } catch (err) {
       console.warn(err);
       showToast("Ошибка получения информации о частях macOS приложения", "danger");
@@ -5870,6 +5900,65 @@ export default function App() {
                           </div>
                         </div>
                       </div>
+
+                      {/* Integrity and Health Checks (macOS Diagnostics) */}
+                      {macDiagnostics && (
+                        <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/60 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 font-bold text-[11px] uppercase tracking-wider text-slate-700">
+                              <ShieldCheck className="w-4 h-4 text-emerald-500" />
+                              Диагностика целостности macOS сборки
+                            </div>
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                              macDiagnostics.assemblyIntegrity?.status === "PASS"
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200/60"
+                                : "bg-rose-50 text-rose-700 border border-rose-200/60"
+                            }`}>
+                              {macDiagnostics.assemblyIntegrity?.status === "PASS" ? "ТЕСТ ПРОЙДЕН" : "ОШИБКА ЦЕЛОСТНОСТИ"}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600">
+                            <div className="bg-white p-2 rounded-lg border border-slate-100 flex flex-col justify-between">
+                              <span className="text-[9px] text-slate-400 font-bold uppercase">Размер архива</span>
+                              <span className="font-bold text-slate-800 mt-0.5">{macDiagnostics.mainZip?.exists ? `${macDiagnostics.mainZip.sizeMB} MB` : "Не найден"}</span>
+                            </div>
+                            <div className="bg-white p-2 rounded-lg border border-slate-100 flex flex-col justify-between">
+                              <span className="text-[9px] text-slate-400 font-bold uppercase">Тест склейки</span>
+                              <span className="font-bold text-slate-800 mt-0.5">{macDiagnostics.assemblyIntegrity?.combinedSizeMB} MB</span>
+                            </div>
+                          </div>
+
+                          <div className="bg-white p-3 rounded-xl border border-slate-100 space-y-2 text-[11px]">
+                            <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                              <span className="text-slate-500">Контрольная сумма SHA256 (Архив):</span>
+                              <span className="font-mono text-[9px] text-slate-400 truncate max-w-[180px]" title={macDiagnostics.mainZip?.sha256}>
+                                {macDiagnostics.mainZip?.sha256 || "отсутствует"}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-500">Контрольная сумма SHA256 (Склейка):</span>
+                              <span className="font-mono text-[9px] text-slate-400 truncate max-w-[180px]" title={macDiagnostics.assemblyIntegrity?.combinedSha256}>
+                                {macDiagnostics.assemblyIntegrity?.combinedSha256 || "отсутствует"}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 text-[10px] bg-emerald-50/40 border border-emerald-100/50 rounded-xl p-2.5 text-emerald-800 leading-tight">
+                            {macDiagnostics.assemblyIntegrity?.matchesMainZipSha256 ? (
+                              <>
+                                <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                                <span>Криптографическая верификация пройдена на 100%! Ошибок целостности не обнаружено.</span>
+                              </>
+                            ) : (
+                              <>
+                                <XCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+                                <span className="text-rose-800">Обнаружено несовпадение контрольных сумм. Сборка требует перепроверки на сервере.</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Step 2: Combine using terminal */}
                       <div className="space-y-3">
