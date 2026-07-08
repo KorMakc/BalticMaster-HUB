@@ -1411,7 +1411,7 @@ export default function App() {
         LS_AI_ARTICLES_KEY,
         JSON.stringify({ used: aiUsedIndices, articles: updatedArticles })
       );
-      showToast("Статья успешно создана по офлайн-шаблону!", "success");
+      showToast("Создан локальный шаблон статьи.", "info");
     };
 
     setTmplIsGenerating(true);
@@ -1704,7 +1704,11 @@ export default function App() {
       setTextQualityRecommendations(recs);
 
       setHasCheckedText(true);
-      showToast("Текст проверен в локальном (офлайн) режиме.", "success");
+      if (warnMessage) {
+        showToast("ИИ-анализ временно недоступен. Задействован локальный экспресс-анализ.", "danger");
+      } else {
+        showToast("Выполнен локальный экспресс-анализ текста.", "info");
+      }
     };
 
     if (isSpellcheckOnline) {
@@ -1740,6 +1744,7 @@ export default function App() {
         showToast("Глубокий анализ текста успешно выполнен с помощью ИИ!", "success");
       } catch (e: any) {
         await runLocalCheck(`Real quality check API failed, using fallback local algorithm: ${e.message}`);
+        showToast(`Ошибка ИИ-анализа: ${e.message || e}. Переключено на локальный анализатор.`, "danger");
       } finally {
         setIsCheckingText(false);
       }
@@ -1860,7 +1865,7 @@ export default function App() {
       setAiClichés([]);
       setHumanScore(95);
       setWaterPercent(Math.max(10, waterPercent - 15));
-      showToast("Текст очищен с помощью быстрой локальной замены (офлайн-режим)", "success");
+      showToast(`Ошибка ИИ-очеловечивания: ${err.message || err}. Текст очищен локально с помощью быстрой замены.`, "danger");
     } finally {
       setIsHumanizingText(false);
     }
@@ -1928,7 +1933,7 @@ export default function App() {
         spamPercent: analyzedText.includes("ремонт") ? 35 : 15,
         waterPercent: Math.min(80, Math.max(15, Math.round((charsCount / wordsCount) * 4)))
       });
-      showToast("SEO-анализ выполнен в локальном (офлайн) режиме.", "success");
+      showToast(`Ошибка ИИ-анализа SEO: ${err.message || err}. Применен локальный экспресс-анализ.`, "danger");
     } finally {
       setIsAnalyzingSeo(false);
     }
