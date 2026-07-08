@@ -36,11 +36,6 @@ function getAIClient(clientApiKey?: string): GoogleGenAI {
     throw new Error("GEMINI_API_KEY is not set. Please configure it in the Secrets panel in AI Studio.");
   }
 
-  // Check if key is a restricted/unsupported sandbox token (starts with AQ. or does not start with standard AIzaSy)
-  if (apiKey.startsWith("AQ.") || !apiKey.startsWith("AIzaSy")) {
-    throw new Error("Встроенный ключ сервера имеет неподходящий тип или заблокирован (ACCESS_TOKEN_TYPE_UNSUPPORTED). Пожалуйста, укажите ваш собственный рабочий API-ключ Gemini (начинающийся с AIzaSy) в настройках приложения.");
-  }
-
   return new GoogleGenAI({
     apiKey: apiKey,
     httpOptions: {
