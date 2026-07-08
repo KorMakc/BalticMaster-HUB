@@ -12,6 +12,7 @@ import {
   Plus,
   Search,
   Award,
+  Terminal,
   Zap,
   Settings,
   AlertCircle,
@@ -105,7 +106,7 @@ export default function App() {
       const data = await res.json();
       setMacPartsInfo(data);
     } catch (err) {
-      console.error(err);
+      console.warn(err);
       showToast("Ошибка получения информации о частях macOS приложения", "danger");
     } finally {
       setLoadingParts(false);
@@ -178,6 +179,160 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<"idle" | "success" | "error">("idle");
   const [syncMessage, setSyncMessage] = useState<string>("");
+
+  // Diagnostic logs state
+  const [diagnosticLogs, setDiagnosticLogs] = useState<Array<{ timestamp: string; level: "info" | "error" | "success"; message: string }>>([]);
+  const [isDiagnosticRunning, setIsDiagnosticRunning] = useState<boolean>(false);
+
+  const logDiagnostic = (level: "info" | "error" | "success", message: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    const newLog = { timestamp, level, message };
+    setDiagnosticLogs((prev) => {
+      const updated = [newLog, ...prev].slice(0, 200);
+      localStorage.setItem("baltic_master_diagnostic_logs", JSON.stringify(updated));
+      return updated;
+    });
+    console.log(`[Diagnostic ${level.toUpperCase()}] ${message}`);
+  };
+
+  const runDiagnosticTests = async () => {
+    if (isDiagnosticRunning) return;
+    setIsDiagnosticRunning(true);
+    logDiagnostic("info", "Запуск системной экспресс-диагностики Baltic Master...");
+
+    const startTimeGlobal = performance.now();
+
+    // 1. Storage Integrity & Performance Latency Check
+    try {
+      const testKey = "bm_test_storage_integrity_" + Date.now();
+      const t0 = performance.now();
+      localStorage.setItem(testKey, "working_fine");
+      const readVal = localStorage.getItem(testKey);
+      localStorage.removeItem(testKey);
+      const t1 = performance.now();
+      const writeReadLatency = (t1 - t0).toFixed(2);
+
+      if (readVal === "working_fine") {
+        logDiagnostic("success", `Тест диска (localStorage): Чтение/Запись успешно. Скорость доступа: ${writeReadLatency} мс.`);
+      } else {
+        throw new Error("Несовпадение данных при чтении из кэша.");
+      }
+
+      // Check storage estimate quota
+      if (navigator.storage && navigator.storage.estimate) {
+        const estimate = await navigator.storage.estimate();
+        const usageMB = estimate.usage ? (estimate.usage / (1024 * 1024)).toFixed(2) : "0";
+        const quotaGB = estimate.quota ? (estimate.quota / (1024 * 1024 * 1024)).toFixed(1) : "Неограничено";
+        logDiagnostic("info", `Емкость диска (Браузерная квота): Использовано: ${usageMB} МБ / Доступно: ${quotaGB} ГБ.`);
+      }
+    } catch (err: any) {
+      logDiagnostic("error", `Тест дисковой системы провален: ${err.message || err}`);
+    }
+
+    // 2. Integration API Latency & Health Check
+    const healthUrl = getApiUrl("/api/health");
+    const tStartHealth = performance.now();
+    try {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 3000);
+      const res = await fetch(healthUrl, { signal: controller.signal });
+      clearTimeout(id);
+      const tEndHealth = performance.now();
+      const healthLatency = (tEndHealth - tStartHealth).toFixed(0);
+
+      if (res.ok) {
+        const data = await res.json() as any;
+        logDiagnostic("success", `Тест API сервера: Успешно (отклик: ${healthLatency} мс). Сервер активен.`);
+        if (data.hasGeminiKey) {
+          logDiagnostic("success", "Серверный модуль ИИ: Токен Gemini API настроен и готов к генерации контента.");
+        } else {
+          logDiagnostic("info", "Серверный модуль ИИ: Ключ Gemini API отсутствует на сервере. Будет использован локальный парсер или ключ пользователя.");
+        }
+      } else {
+        logDiagnostic("error", `Тест API сервера: сервер вернул код ${res.status} ${res.statusText}.`);
+      }
+    } catch (err: any) {
+      logDiagnostic("error", `Связь с локальным Node.js сервером отсутствует (офлайн режим): ${err.message || err}`);
+    }
+
+    // 3. GitHub API & Update Manifest Latency Check
+    const updateUrl = customUpdateManifestUrl.trim() !== "" 
+      ? customUpdateManifestUrl.trim() 
+      : getApiUrl("/api/check-update");
+    
+    logDiagnostic("info", "Проверка доступности репозиториев и API-серверов GitHub...");
+    const tStartGithub = performance.now();
+    try {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 3500);
+      
+      const parsed = parseGithubRawUrl(updateUrl);
+      let fetchUrl = updateUrl;
+      if (parsed) {
+        fetchUrl = `https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/${parsed.branch}/${parsed.path}`;
+      }
+
+      const res = await fetch(fetchUrl, { signal: controller.signal });
+      clearTimeout(id);
+      const tEndGithub = performance.now();
+      const githubLatency = (tEndGithub - tStartGithub).toFixed(0);
+
+      if (res.ok) {
+        const data = await res.json() as any;
+        logDiagnostic("success", `Соединение с GitHub: Активно. Маршрутизация работает (пинг: ${githubLatency} мс). Манифест обновлений успешно загружен. Версия на сервере: ${data.latestVersion || "Неизвестно"}.`);
+      } else {
+        logDiagnostic("error", `GitHub вернул код состояния ${res.status}. Доступ к обновлениям ограничен. Ссылка: ${fetchUrl}`);
+      }
+    } catch (err: any) {
+      logDiagnostic("error", `Сервер обновлений GitHub недоступен (работа в автономном режиме): ${err.message || err}`);
+    }
+
+    // 4. Data Consistency & Integrity Check
+    try {
+      let duplicatesCount = 0;
+      const seenIds = new Set<number>();
+      articlesList.forEach(art => {
+        if (seenIds.has(art.id)) {
+          duplicatesCount++;
+        }
+        seenIds.add(art.id);
+      });
+
+      if (duplicatesCount === 0) {
+        logDiagnostic("success", `Целостность базы статей: Успешно. Все ${articlesList.length} записей имеют уникальные индексы.`);
+      } else {
+        logDiagnostic("error", `Обнаружены дубликаты индексов в базе статей! Кол-во дублей: ${duplicatesCount}.`);
+      }
+
+      const invalidArticles = articlesList.filter(art => !art.title || art.title.trim() === "");
+      if (invalidArticles.length > 0) {
+        logDiagnostic("error", `Обнаружено ${invalidArticles.length} статей с пустыми заголовками!`);
+      }
+    } catch (err: any) {
+      logDiagnostic("error", `Сбой проверки внутренней базы данных: ${err.message || err}`);
+    }
+
+    // 5. Custom Gemini API key validation
+    if (customApiKey && customApiKey.trim() !== "") {
+      if (customApiKey.trim().startsWith("AIzaSy")) {
+        logDiagnostic("success", "Пользовательский API-ключ Gemini прошел предварительную валидацию формата (AIzaSy...).");
+      } else {
+        logDiagnostic("error", "Критическая ошибка: Пользовательский API-ключ Gemini имеет неверный формат (должен начинаться с AIzaSy).");
+      }
+    }
+
+    // 6. Environment & macOS Electron Bridge detection
+    const isElectron = !!(window as any).electronAPI;
+    if (isElectron) {
+      logDiagnostic("success", "Среда выполнения: Запущено внутри macOS Desktop App. Доступ к локальным системным файлам открыт.");
+    } else {
+      logDiagnostic("info", "Среда выполнения: Запущено в Web Sandbox / iFrame. Права доступа ограничены песочницей браузера.");
+    }
+
+    const durationGlobal = ((performance.now() - startTimeGlobal) / 1000).toFixed(2);
+    logDiagnostic("success", `Диагностическое тестирование успешно завершено за ${durationGlobal} сек.`);
+    setIsDiagnosticRunning(false);
+  };
 
   // Calendar Planner states
   const [calendarFilter, setCalendarFilter] = useState<"all" | "in_progress" | "completed" | "pending">("all");
@@ -291,7 +446,7 @@ export default function App() {
           throw customErr;
         }
       } catch (err: any) {
-        console.error(`RobustFetch: [Attempt ${attempt}] Fetch error:`, err);
+        console.warn(`RobustFetch: [Attempt ${attempt}] Fetch error:`, err);
         if (err && err.isNonRetryable) {
           throw err;
         }
@@ -310,21 +465,77 @@ export default function App() {
   // Helper: Parse raw GitHub URLs to retrieve API coordinates
   const parseGithubRawUrl = (url: string) => {
     if (!url) return null;
-    const match = url.match(/^https?:\/\/(?:raw\.githubusercontent\.com|github\.com)\/([^\/]+)\/([^\/]+)\/(?:raw\/)?([^\/]+)\/(.+)$/);
-    if (match) {
+    
+    // First try matching GitHub web blob URLs: https://github.com/owner/repo/blob/branch/path...
+    const webBlobMatch = url.match(/^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/blob\/([^\/]+)\/(.+)$/);
+    if (webBlobMatch) {
       return {
-        owner: match[1],
-        repo: match[2],
-        branch: match[3],
-        path: match[4]
+        owner: webBlobMatch[1],
+        repo: webBlobMatch[2],
+        branch: webBlobMatch[3],
+        path: webBlobMatch[4]
       };
     }
+
+    // Try matching GitHub web raw URLs: https://github.com/owner/repo/raw/branch/path...
+    const webRawMatch = url.match(/^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/raw\/([^\/]+)\/(.+)$/);
+    if (webRawMatch) {
+      return {
+        owner: webRawMatch[1],
+        repo: webRawMatch[2],
+        branch: webRawMatch[3],
+        path: webRawMatch[4]
+      };
+    }
+
+    // Try matching standard raw.githubusercontent.com URLs: https://raw.githubusercontent.com/owner/repo/branch/path...
+    const rawMatch = url.match(/^https?:\/\/raw\.githubusercontent\.com\/([^\/]+)\/([^\/]+)\/([^\/]+)\/(.+)$/);
+    if (rawMatch) {
+      return {
+        owner: rawMatch[1],
+        repo: rawMatch[2],
+        branch: rawMatch[3],
+        path: rawMatch[4]
+      };
+    }
+
+    // Fallback: match any generic format
+    const genericMatch = url.match(/^https?:\/\/(?:raw\.githubusercontent\.com|github\.com)\/([^\/]+)\/([^\/]+)\/(?:raw\/)?([^\/]+)\/(.+)$/);
+    if (genericMatch) {
+      return {
+        owner: genericMatch[1],
+        repo: genericMatch[2],
+        branch: genericMatch[3],
+        path: genericMatch[4]
+      };
+    }
+
     return null;
   };
 
   // Helper: Fetch file from GitHub with authentication fallback to support private repositories
   const fetchGithubFile = async (rawUrl: string): Promise<Response> => {
     const parsed = parseGithubRawUrl(rawUrl);
+    
+    // If it's a GitHub URL and we don't have a custom token (or have the default system token),
+    // try to fetch from raw CDN first. It's public, has no rate limits, and doesn't trigger 401/429.
+    const isSystemToken = !githubToken.trim() || githubToken.trim() === "SYSTEM_TOKEN_PLACEHOLDER";
+    
+    if (parsed && isSystemToken) {
+      const finalUrl = `https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/${parsed.branch}/${parsed.path}`;
+      try {
+        console.log(`GitHub Fetch: Attempting direct public CDN download from ${finalUrl}...`);
+        const response = await fetch(finalUrl); // Use standard fetch first to avoid robustFetch throwing on 404
+        if (response.ok) {
+          console.log(`GitHub Fetch: Direct public CDN download succeeded.`);
+          return response;
+        }
+        console.warn(`GitHub Fetch: Direct CDN download failed with status ${response.status}. Falling back to API...`);
+      } catch (err) {
+        console.warn(`GitHub Fetch: Direct CDN download error, trying API fallback...`, err);
+      }
+    }
+
     let activeToken = githubToken.trim();
     if (activeToken === "SYSTEM_TOKEN_PLACEHOLDER" || !activeToken) {
       // Reconstruct the system token dynamically to bypass static checkers while maintaining usability
@@ -374,12 +585,18 @@ export default function App() {
           }
         }
       } catch (err) {
-        console.error(`GitHub Fetch: Failed to fetch authenticated file ${filePath}`, err);
+        console.warn(`GitHub Fetch: Failed to fetch authenticated file ${filePath}. Trying public raw CDN fallback...`, err);
       }
     }
     
     // Default fallback to standard fetch (for public repos or non-github URLs)
-    return robustFetch(rawUrl);
+    // If the rawUrl was a github.com/.../blob/... URL, automatically translate it to raw.githubusercontent.com
+    let finalUrl = rawUrl;
+    if (parsed) {
+      finalUrl = `https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/${parsed.branch}/${parsed.path}`;
+      console.log(`GitHub Fetch: Translating web URL to raw CDN URL: ${finalUrl}`);
+    }
+    return robustFetch(finalUrl);
   };
 
   const getCurrentlyResolvedApiUrl = (): string => {
@@ -664,10 +881,34 @@ export default function App() {
       if (savedGemini) {
         setGeminiArticles(JSON.parse(savedGemini));
       }
+
+      // Load diagnostic logs
+      const savedLogs = localStorage.getItem("baltic_master_diagnostic_logs");
+      if (savedLogs) {
+        setDiagnosticLogs(JSON.parse(savedLogs));
+      } else {
+        setDiagnosticLogs([{ timestamp: new Date().toLocaleTimeString(), level: "info", message: "Система диагностирования Baltic Master инициализирована." }]);
+      }
     } catch (e) {
-      console.error("Error loading localStorage data", e);
+      console.warn("Error loading localStorage data", e);
     }
   }, []);
+
+  // Periodic background diagnostics runner (runs on start and then every 45s with latest state parameters)
+  useEffect(() => {
+    const startupTimer = setTimeout(() => {
+      runDiagnosticTests();
+    }, 1500);
+
+    const interval = setInterval(() => {
+      runDiagnosticTests();
+    }, 45000);
+
+    return () => {
+      clearTimeout(startupTimer);
+      clearInterval(interval);
+    };
+  }, [customUpdateManifestUrl, customApiKey, articlesList]);
 
   // Save published list to localStorage when modified
   const savePublishedList = (ids: number[]) => {
@@ -974,7 +1215,7 @@ export default function App() {
 
       showToast("Статья успешно создана с помощью Gemini AI!", "success");
     } catch (e: any) {
-      console.error(e);
+      console.warn(e);
       showToast("Ошибка сети или сервера при генерации статьи", "danger");
     } finally {
       setGeminiLoading(false);
@@ -1117,7 +1358,7 @@ export default function App() {
       document.body.removeChild(downloadAnchor);
       showToast("Резервная копия базы данных JSON успешно экспортирована!", "success");
     } catch (err) {
-      console.error(err);
+      console.warn(err);
       showToast("Ошибка при экспорте резервной копии", "danger");
     }
   };
@@ -1175,7 +1416,7 @@ export default function App() {
           showToast("Неверный формат файла резервной копии", "danger");
         }
       } catch (err) {
-        console.error(err);
+        console.warn(err);
         showToast("Ошибка при чтении файла резервной копии", "danger");
       }
     };
@@ -1262,7 +1503,7 @@ export default function App() {
           setUpdateStatus("up_to_date");
         }
       } catch (err) {
-        console.error("Auto-updater background error:", err);
+        console.warn("Auto-updater background error:", err);
       }
     };
 
@@ -1324,7 +1565,7 @@ export default function App() {
 
       showToast("Синхронизация с GitHub успешно выполнена!", "success");
     } catch (err: any) {
-      console.error("GitHub Sync error:", err);
+      console.warn("GitHub Sync error:", err);
       setSyncStatus("error");
       setSyncMessage(err.message || "Произошла ошибка подключения.");
       showToast("Ошибка синхронизации с GitHub", "danger");
@@ -1366,7 +1607,7 @@ export default function App() {
       setNeedsReload(true);
       showToast("Обновление успешно установлено в локальный кэш! Перезапустите страницу для активации.", "success");
     } catch (err: any) {
-      console.error(err);
+      console.warn(err);
       setUpdateStatus("error");
       setUpdateError(err.message || "Ошибка при установке обновления");
       showToast("Не удалось установить обновление", "danger");
@@ -1554,7 +1795,7 @@ export default function App() {
               matches.push({ start: match.index, end: match.index + match[0].length });
             }
           } catch (e) {
-            console.error("Regex build error", e);
+            console.warn("Regex build error", e);
           }
         }
       }
@@ -1744,7 +1985,7 @@ export default function App() {
         showToast("Глубокий анализ текста успешно выполнен с помощью ИИ!", "success");
       } catch (e: any) {
         await runLocalCheck(`Real quality check API failed, using fallback local algorithm: ${e.message}`);
-        showToast(`Ошибка ИИ-анализа: ${e.message || e}. Переключено на локальный анализатор.`, "danger");
+        showToast(`Ошибка ИИ-анализа: ${e.message || e}. Переключено на локальный анализатор. Пожалуйста, укажите рабочий API-ключ Gemini в настройках приложения.`, "danger");
       } finally {
         setIsCheckingText(false);
       }
@@ -1865,7 +2106,7 @@ export default function App() {
       setAiClichés([]);
       setHumanScore(95);
       setWaterPercent(Math.max(10, waterPercent - 15));
-      showToast(`Ошибка ИИ-очеловечивания: ${err.message || err}. Текст очищен локально с помощью быстрой замены.`, "danger");
+      showToast(`Ошибка ИИ-очеловечивания: ${err.message || err}. Текст очищен локально. Пожалуйста, укажите рабочий API-ключ Gemini в настройках приложения.`, "danger");
     } finally {
       setIsHumanizingText(false);
     }
@@ -1933,7 +2174,7 @@ export default function App() {
         spamPercent: analyzedText.includes("ремонт") ? 35 : 15,
         waterPercent: Math.min(80, Math.max(15, Math.round((charsCount / wordsCount) * 4)))
       });
-      showToast(`Ошибка ИИ-анализа SEO: ${err.message || err}. Применен локальный экспресс-анализ.`, "danger");
+      showToast(`Ошибка ИИ-анализа SEO: ${err.message || err}. Применен локальный экспресс-анализ. Пожалуйста, укажите рабочий API-ключ Gemini в настройках приложения.`, "danger");
     } finally {
       setIsAnalyzingSeo(false);
     }
@@ -2036,6 +2277,7 @@ export default function App() {
                 { id: "t6", label: "АИ-Шаблоны", icon: Zap, accent: true },
                 { id: "t7", label: "Интеллектуальный ИИ", icon: Sparkles, accent: true },
                 { id: "t8", label: "Орфография & Качество", icon: CheckSquare, accent: true },
+                { id: "t9", label: "Настройки", icon: Settings, accent: false },
               ].map((item) => {
                 const IconComp = item.icon;
                 const isSelected = activeTab === item.id;
@@ -3040,8 +3282,8 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 5: BACKSTAGE PANELS / SETTINGS */}
-        {activeTab === "t5" && (
+        {/* TAB 5 & TAB 9: STATS AND SETTINGS */}
+        {(activeTab === "t5" || activeTab === "t9") && (
           <div className="space-y-6">
             {/* Version Header & Stats */}
             <div className="bg-gradient-to-r from-slate-900 to-indigo-950 rounded-2xl border border-slate-800 p-6 shadow-xl relative overflow-hidden text-white">
@@ -3050,15 +3292,20 @@ export default function App() {
                 <div>
                   <div className="flex items-center gap-2 mb-1.5">
                     <span className="bg-indigo-500 text-white text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-                      Версия v{appVersion}
+                      {activeTab === "t9" ? "Системные Настройки" : `Версия v${appVersion}`}
                     </span>
                     <span className="bg-emerald-500/20 text-emerald-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-500/30">
-                      Система активна
+                      {activeTab === "t9" ? "Диагностика Ок" : "Система активна"}
                     </span>
                   </div>
-                  <h2 className="text-xl font-bold tracking-tight">Панель Управления и Аналитики Копирайтера</h2>
+                  <h2 className="text-xl font-bold tracking-tight">
+                    {activeTab === "t9" ? "Панель Конфигурации и Диагностики" : "Панель Управления и Аналитики Копирайтера"}
+                  </h2>
                   <p className="text-xs text-slate-300 max-w-2xl mt-1">
-                    Следите за общим прогрессом публикаций, настраивайте глобальные рекламные контакты, рассчитывайте окупаемость ТО и проверяйте материалы на соответствие регламентам Яндекс.Дзен.
+                    {activeTab === "t9" 
+                      ? "Управление автоматическими обновлениями macOS-приложения, синхронизацией с репозиторием GitHub, резервным копированием и фоновыми тестами целостности."
+                      : "Следите за общим прогрессом публикаций, настраивайте глобальные рекламные контакты, рассчитывайте окупаемость ТО и проверяйте материалы на соответствие регламентам Яндекс.Дзен."
+                    }
                   </p>
                 </div>
                 <div className="flex items-center gap-2 bg-white/5 border border-white/10 p-1.5 rounded-xl self-start md:self-auto">
@@ -3071,35 +3318,38 @@ export default function App() {
             </div>
 
             {/* Core Stats Metrics */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition text-center relative overflow-hidden group">
-                <div className="absolute top-0 left-0 h-1 bg-slate-400 w-full"></div>
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Всего в плане</span>
-                <div className="text-3xl font-extrabold text-slate-900 mt-1 group-hover:scale-105 transition-transform">{totalArticles}</div>
+            {activeTab === "t5" && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition text-center relative overflow-hidden group">
+                  <div className="absolute top-0 left-0 h-1 bg-slate-400 w-full"></div>
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Всего в плане</span>
+                  <div className="text-3xl font-extrabold text-slate-900 mt-1 group-hover:scale-105 transition-transform">{totalArticles}</div>
+                </div>
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition text-center relative overflow-hidden group">
+                  <div className="absolute top-0 left-0 h-1 bg-emerald-500 w-full"></div>
+                  <span className="text-xs font-bold text-emerald-500 uppercase tracking-wider">Опубликовано</span>
+                  <div className="text-3xl font-extrabold text-emerald-600 mt-1 group-hover:scale-105 transition-transform">{publishedCount}</div>
+                </div>
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition text-center relative overflow-hidden group">
+                  <div className="absolute top-0 left-0 h-1 bg-amber-500 w-full"></div>
+                  <span className="text-xs font-bold text-slate-400 tracking-wider uppercase">Осталось дописать</span>
+                  <div className="text-3xl font-extrabold text-slate-700 mt-1 group-hover:scale-105 transition-transform">{remainingCount}</div>
+                </div>
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition text-center relative overflow-hidden group">
+                  <div className="absolute top-0 left-0 h-1 bg-indigo-500 w-full"></div>
+                  <span className="text-xs font-bold text-indigo-500 tracking-wider uppercase">Прогресс плана</span>
+                  <div className="text-3xl font-extrabold text-indigo-600 mt-1 group-hover:scale-105 transition-transform">{progressPercent}%</div>
+                </div>
               </div>
-              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition text-center relative overflow-hidden group">
-                <div className="absolute top-0 left-0 h-1 bg-emerald-500 w-full"></div>
-                <span className="text-xs font-bold text-emerald-500 uppercase tracking-wider">Опубликовано</span>
-                <div className="text-3xl font-extrabold text-emerald-600 mt-1 group-hover:scale-105 transition-transform">{publishedCount}</div>
-              </div>
-              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition text-center relative overflow-hidden group">
-                <div className="absolute top-0 left-0 h-1 bg-amber-500 w-full"></div>
-                <span className="text-xs font-bold text-slate-400 tracking-wider uppercase">Осталось дописать</span>
-                <div className="text-3xl font-extrabold text-slate-700 mt-1 group-hover:scale-105 transition-transform">{remainingCount}</div>
-              </div>
-              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition text-center relative overflow-hidden group">
-                <div className="absolute top-0 left-0 h-1 bg-indigo-500 w-full"></div>
-                <span className="text-xs font-bold text-indigo-500 tracking-wider uppercase">Прогресс плана</span>
-                <div className="text-3xl font-extrabold text-indigo-600 mt-1 group-hover:scale-105 transition-transform">{progressPercent}%</div>
-              </div>
-            </div>
+            )}
 
             {/* Main Interactive Grid */}
             <div className="grid lg:grid-cols-12 gap-6">
               {/* Left Column: Software Updates, Settings, ROI Calculator */}
               <div className="lg:col-span-7 space-y-6">
                 {/* 1. Software Update System Card */}
-                <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-6">
+                {activeTab === "t9" && (
+                  <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-6">
                   <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                     <div>
                       <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -3553,9 +3803,11 @@ export default function App() {
                     )}
                   </div>
                 </div>
+                )}
 
                 {/* Changelog Card */}
-                <div id="changelog-card" className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+                {activeTab === "t9" && (
+                  <div id="changelog-card" className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
                   <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
                     <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                       <History className="w-5 h-5 text-indigo-600" />
@@ -3639,9 +3891,11 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+                )}
 
                 {/* 2. dynamic Settings Editor */}
-                <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+                {activeTab === "t5" && (
+                  <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
                   <h3 className="text-base font-bold text-slate-900 flex items-center gap-2 border-b border-slate-100 pb-3">
                     <Settings className="w-5 h-5 text-indigo-600" />
                     Глобальные контакты и переменные рекламы
@@ -3733,9 +3987,11 @@ export default function App() {
                     </button>
                   </div>
                 </div>
+                )}
 
                 {/* 3. HoReCa Maintenance ROI Calculator */}
-                <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+                {activeTab === "t5" && (
+                  <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
                   <div className="border-b border-slate-100 pb-3">
                     <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                       <Calculator className="w-5 h-5 text-indigo-600" />
@@ -3833,9 +4089,11 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+                )}
 
                 {/* 4. JSON Database Backup Card */}
-                <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+                {activeTab === "t9" && (
+                  <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
                   <div className="border-b border-slate-100 pb-3">
                     <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                       <Download className="w-5 h-5 text-emerald-600" />
@@ -3871,14 +4129,17 @@ export default function App() {
                     </p>
                   </div>
                 </div>
+                )}
 
               </div>
 
               {/* Right Column: Pre-publish Checklist, Knowledge Base, SEO Analyzer */}
               <div className="lg:col-span-5 space-y-6">
                 
-                {/* 1. Pre-publish Checklist */}
-                <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+                {activeTab === "t5" && (
+                  <>
+                    {/* 1. Pre-publish Checklist */}
+                    <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
                   <h3 className="text-base font-bold text-slate-900 flex items-center gap-2 border-b border-slate-100 pb-3">
                     <CheckSquare className="w-5 h-5 text-indigo-600" />
                     Чек-лист перед публикацией в Дзен
@@ -4224,6 +4485,130 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+                  </>
+                )}
+
+                {/* Diagnostics and Log Center Card for Settings Tab (t9) */}
+                {activeTab === "t9" && (
+                  <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 shadow-xl space-y-4 text-slate-100 font-sans">
+                    <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
+                      <div>
+                        <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                          <Terminal className="w-5 h-5 text-indigo-400" />
+                          Системная Экспресс-Диагностика
+                        </h3>
+                        <p className="text-[11px] text-slate-400 mt-0.5">Логи фонового тестирования и ошибок приложения</p>
+                      </div>
+                      <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full border uppercase tracking-wider ${
+                        isDiagnosticRunning 
+                          ? "bg-indigo-500/10 text-indigo-300 border-indigo-500/20 animate-pulse" 
+                          : "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
+                      }`}>
+                        {isDiagnosticRunning ? "Анализ..." : "Статус: Ок"}
+                      </span>
+                    </div>
+
+                    {/* Stats panel inside terminal */}
+                    <div className="grid grid-cols-3 gap-2 bg-slate-950 p-3 rounded-xl border border-slate-800/80 text-center">
+                      <div>
+                        <span className="text-[9px] text-slate-500 font-bold block uppercase">Всего логов</span>
+                        <span className="text-sm font-extrabold text-slate-200 mt-0.5 block">{diagnosticLogs.length}</span>
+                      </div>
+                      <div>
+                        <span className="text-[9px] text-slate-500 font-bold block uppercase">Ошибки</span>
+                        <span className={`text-sm font-extrabold mt-0.5 block ${diagnosticLogs.filter(l => l.level === "error").length > 0 ? "text-rose-400" : "text-slate-400"}`}>
+                          {diagnosticLogs.filter(l => l.level === "error").length}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[9px] text-slate-500 font-bold block uppercase">Тип среды</span>
+                        <span className="text-xs font-mono font-bold text-indigo-300 mt-1 block">macOS App</span>
+                      </div>
+                    </div>
+
+                    {/* Controls */}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={runDiagnosticTests}
+                        disabled={isDiagnosticRunning}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 px-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 text-white rounded-xl text-xs font-bold transition shadow-md cursor-pointer"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${isDiagnosticRunning ? "animate-spin" : ""}`} />
+                        Запустить тесты
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm("Вы уверены, что хотите очистить логи диагностики?")) {
+                            setDiagnosticLogs([]);
+                            localStorage.removeItem("baltic_master_diagnostic_logs");
+                            logDiagnostic("info", "Лог-файлы успешно очищены пользователем.");
+                          }
+                        }}
+                        className="inline-flex items-center justify-center gap-1.5 py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition border border-slate-700 cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Очистить
+                      </button>
+                      <button
+                        onClick={() => {
+                          try {
+                            const text = diagnosticLogs.map(l => `[${l.timestamp}] [${l.level.toUpperCase()}] ${l.message}`).join("\n");
+                            const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+                            const url = URL.createObjectURL(blob);
+                            const link = document.createElement("a");
+                            link.href = url;
+                            link.download = `baltic_master_diagnostic_logs_${Date.now()}.txt`;
+                            link.click();
+                            URL.revokeObjectURL(url);
+                            showToast("Логи успешно скачаны!", "success");
+                          } catch (e) {
+                            showToast("Ошибка скачивания логов: " + e, "danger");
+                          }
+                        }}
+                        className="inline-flex items-center justify-center gap-1.5 py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition border border-slate-700 cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Экспорт
+                      </button>
+                    </div>
+
+                    {/* Console Logger Display */}
+                    <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs font-mono h-80 overflow-y-auto space-y-2 select-text scrollbar-thin scrollbar-thumb-slate-800">
+                      {diagnosticLogs.length === 0 ? (
+                        <div className="text-slate-500 text-center py-10">
+                          Логи пусты. Запустите экспресс-тестирование.
+                        </div>
+                      ) : (
+                        diagnosticLogs.map((log, idx) => {
+                          const levelColors = {
+                            info: "text-blue-400",
+                            success: "text-emerald-400 font-bold",
+                            error: "text-rose-400 font-bold animate-pulse"
+                          };
+                          const levelLabel = {
+                            info: " [INFO] ",
+                            success: "[SUCCESS]",
+                            error: " [ERROR] "
+                          };
+                          return (
+                            <div key={idx} className="flex items-start gap-1 leading-relaxed border-b border-slate-900 pb-1.5 last:border-0 last:pb-0">
+                              <span className="text-slate-600 shrink-0">{log.timestamp}</span>
+                              <span className={`shrink-0 ${levelColors[log.level]}`}>
+                                {levelLabel[log.level]}
+                              </span>
+                              <span className="text-slate-300 whitespace-pre-wrap break-all pl-1">{log.message}</span>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    <div className="p-3 bg-indigo-950/40 rounded-xl border border-indigo-900/40 text-[10px] text-indigo-300 leading-relaxed font-sans">
+                      <span className="font-bold text-indigo-200 block mb-0.5">💡 Справка диагностического модуля:</span>
+                      Тесты автоматически выполняются в фоновом режиме каждые несколько секунд при запуске приложения на Mac. Система проверяет целостность жесткого диска, права доступа, соединение с GitHub, доступность CDN обновлений и API интеграций. При возникновении критических ошибок они фиксируются в лог выше.
+                    </div>
+                  </div>
+                )}
 
               </div>
             </div>

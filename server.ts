@@ -742,7 +742,12 @@ app.get("/api/download-mac-zip-part/:suffix", async (req, res) => {
 });
 
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", message: "Baltic Master Zen API is running smoothly." });
+  const hasKey = !!(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== "");
+  res.json({
+    status: "ok",
+    message: "Baltic Master Zen API is running smoothly.",
+    hasGeminiKey: hasKey
+  });
 });
 
 app.get("/api/check-update", (req, res) => {
