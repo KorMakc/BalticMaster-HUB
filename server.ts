@@ -777,26 +777,111 @@ async function regenerateOfflineHtml(serverUrl?: string, updateManifestUrl?: str
 
 // Global promise to prevent duplicate concurrent builds
 let macBuildPromise: Promise<void> | null = null;
+let activeBuildProcess: any = null;
+const buildLogPath = path.join(process.cwd(), "build-mac-app.log");
+
+interface MacBuildState {
+  isBuilding: boolean;
+  startTime: string | null;
+  endTime: string | null;
+  status: "idle" | "building" | "success" | "error";
+  error: string | null;
+  currentStep: string;
+}
+
+const macBuildState: MacBuildState = {
+  isBuilding: false,
+  startTime: null,
+  endTime: null,
+  status: "idle",
+  error: null,
+  currentStep: "Ожидание запуска"
+};
 
 function runMacBuild(serverUrl?: string): Promise<void> {
   if (macBuildPromise) {
     return macBuildPromise;
   }
-  
-  macBuildPromise = (async () => {
-    console.log("Starting macOS App build asynchronously with serverUrl:", serverUrl);
-    const envPrefix = serverUrl ? `APP_URL="${serverUrl}" ` : "";
-    await execPromise(`${envPrefix}npx tsx build-mac-app.js`);
-  })().then(
-    () => {
-      macBuildPromise = null; // Clear so it can be rebuilt in the future if requested/needed
-    },
-    (err) => {
-      macBuildPromise = null; // Reset on failure so it can be retried
-      throw err;
-    }
-  );
-  
+
+  macBuildState.isBuilding = true;
+  macBuildState.startTime = new Date().toISOString();
+  macBuildState.endTime = null;
+  macBuildState.status = "building";
+  macBuildState.error = null;
+  macBuildState.currentStep = "Инициализация процесса сборки...";
+
+  // Clear previous build log file
+  try {
+    fs.writeFileSync(buildLogPath, `[${new Date().toISOString()}] Инициализация сборки macOS приложения...\n`);
+  } catch (e) {
+    console.error("Failed to write initial build log:", e);
+  }
+
+  const envPrefix = serverUrl ? `APP_URL="${serverUrl}" ` : "";
+  const command = `${envPrefix}npx tsx build-mac-app.js`;
+
+  macBuildPromise = new Promise<void>((resolve, reject) => {
+    const child = exec(command, { cwd: process.cwd() });
+    activeBuildProcess = child;
+
+    child.stdout?.on("data", (data) => {
+      const dataStr = data.toString();
+      try {
+        fs.appendFileSync(buildLogPath, dataStr);
+      } catch (e) {}
+      
+      // Parse step from stdout to update currentStep
+      if (dataStr.includes("Step 1:")) {
+        macBuildState.currentStep = "Регенерация адаптивного офлайн-HTML...";
+      } else if (dataStr.includes("Step 2:")) {
+        macBuildState.currentStep = "Подготовка директорий и ресурсов...";
+      } else if (dataStr.includes("Step 3:")) {
+        macBuildState.currentStep = "Создание package.json для Electron...";
+      } else if (dataStr.includes("Step 4:")) {
+        macBuildState.currentStep = "Создание сценария Electron (main.cjs)...";
+      } else if (dataStr.includes("Step 5:")) {
+        macBuildState.currentStep = "Компиляция macOS приложения (electron-packager)...";
+      } else if (dataStr.includes("Step 6:")) {
+        macBuildState.currentStep = "Создание ZIP-архива дистрибутива...";
+      } else if (dataStr.includes("Step 7:")) {
+        macBuildState.currentStep = "Разбиение архива на части по 24MB...";
+      } else if (dataStr.includes("SUCCESSFUL")) {
+        macBuildState.currentStep = "Сборка успешно завершена!";
+      }
+    });
+
+    child.stderr?.on("data", (data) => {
+      const dataStr = data.toString();
+      try {
+        fs.appendFileSync(buildLogPath, `[ERR] ${dataStr}`);
+      } catch (e) {}
+    });
+
+    child.on("close", (code) => {
+      macBuildState.isBuilding = false;
+      macBuildState.endTime = new Date().toISOString();
+      activeBuildProcess = null;
+      macBuildPromise = null; // reset promise so next build can run
+
+      if (code === 0) {
+        macBuildState.status = "success";
+        macBuildState.currentStep = "Готово!";
+        try {
+          fs.appendFileSync(buildLogPath, `\n[${new Date().toISOString()}] Сборка macOS успешно завершена.\n`);
+        } catch (e) {}
+        resolve();
+      } else {
+        macBuildState.status = "error";
+        macBuildState.error = `Скрипт завершился с кодом ошибки ${code}`;
+        macBuildState.currentStep = `Ошибка сборки (Код: ${code})`;
+        try {
+          fs.appendFileSync(buildLogPath, `\n[${new Date().toISOString()}] Ошибка сборки. Код: ${code}.\n`);
+        } catch (e) {}
+        reject(new Error(`Build failed with exit code ${code}`));
+      }
+    });
+  });
+
   return macBuildPromise;
 }
 
@@ -973,15 +1058,78 @@ app.get("/api/download-mac-zip-part/:suffix", async (req, res) => {
 app.get("/api/mac-diagnostics", async (req, res) => {
   try {
     const crypto = await import("crypto");
+    const os = await import("os");
     const workspaceRoot = process.cwd();
     const offlineHtmlPath = path.join(workspaceRoot, "baltic_master_zen.html");
     const distMacDir = path.join(workspaceRoot, "dist-mac");
     const mainZipPath = path.join(distMacDir, "Baltic_Master_Zen_macOS_M4.zip");
     const desktopBuildDir = path.join(workspaceRoot, "desktop-build");
+    const buildLogPath = path.join(workspaceRoot, "build-mac-app.log");
+
+    // Write permission check
+    let writePermissionOk = false;
+    try {
+      const testFilePath = path.join(workspaceRoot, ".write-test");
+      fs.writeFileSync(testFilePath, "test", "utf8");
+      fs.unlinkSync(testFilePath);
+      writePermissionOk = true;
+    } catch (e) {
+      writePermissionOk = false;
+    }
+
+    // 1. Check system details
+    const system = {
+      nodeVersion: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      memoryFreeMB: (os.freemem() / 1024 / 1024).toFixed(0),
+      memoryTotalMB: (os.totalmem() / 1024 / 1024).toFixed(0),
+      uptimeHours: (os.uptime() / 3600).toFixed(1),
+      writePermissionOk
+    };
+
+    // 2. Check source scripts and templates
+    const buildScriptPath = path.join(workspaceRoot, "build-mac-app.js");
+    const generateHtmlScriptPath = path.join(workspaceRoot, "generate-single-html.js");
+    const sourceIconPath = path.join(workspaceRoot, "src/assets/images/mac_app_icon_1782714607199.jpg");
+
+    const sources = {
+      buildScriptExists: fs.existsSync(buildScriptPath),
+      generateHtmlScriptExists: fs.existsSync(generateHtmlScriptPath),
+      sourceIconExists: fs.existsSync(sourceIconPath),
+      sourceIconSizeKB: fs.existsSync(sourceIconPath) ? (fs.statSync(sourceIconPath).size / 1024).toFixed(1) : "0"
+    };
+
+    // 3. Check compiled resources
+    const electronFiles = {
+      folderExists: fs.existsSync(desktopBuildDir),
+      packageJsonExists: fs.existsSync(path.join(desktopBuildDir, "package.json")),
+      mainCjsExists: fs.existsSync(path.join(desktopBuildDir, "main.cjs")),
+      preloadCjsExists: fs.existsSync(path.join(desktopBuildDir, "preload.cjs")),
+      htmlExists: fs.existsSync(path.join(desktopBuildDir, "baltic_master_zen.html")),
+      iconPngExists: fs.existsSync(path.join(desktopBuildDir, "icon.png"))
+    };
+
+    // 4. Dependency checks
+    const checkNodeModule = (name: string) => {
+      return fs.existsSync(path.join(workspaceRoot, "node_modules", name));
+    };
+
+    const dependencies = {
+      archiver: checkNodeModule("archiver"),
+      jimp: checkNodeModule("jimp"),
+      electronPackager: checkNodeModule("electron-packager"),
+      electronBuilder: checkNodeModule("electron-builder")
+    };
 
     const response: any = {
-      offlineHtml: { exists: false, sizeMB: "0.00", sha256: "" },
-      mainZip: { exists: false, sizeMB: "0.00", sha256: "" },
+      system,
+      sources,
+      electronFiles,
+      dependencies,
+      buildState: macBuildState,
+      offlineHtml: { exists: false, sizeMB: "0.00", sha256: "", mtime: null },
+      mainZip: { exists: false, sizeMB: "0.00", sha256: "", mtime: null },
       parts: [],
       assemblyIntegrity: {
         partsCount: 0,
@@ -991,14 +1139,11 @@ app.get("/api/mac-diagnostics", async (req, res) => {
         matchesMainZipSha256: false,
         status: "FAIL"
       },
-      electronBuildInfo: {
-        desktopBuildFolderExists: fs.existsSync(desktopBuildDir),
-        electronVersion: "34.0.0",
-        macOSArch: "arm64"
-      }
+      logsTail: "",
+      recommendations: []
     };
 
-    // 1. Offline HTML check
+    // Offline HTML check
     if (fs.existsSync(offlineHtmlPath)) {
       const stats = fs.statSync(offlineHtmlPath);
       const fileBuffer = fs.readFileSync(offlineHtmlPath);
@@ -1006,11 +1151,12 @@ app.get("/api/mac-diagnostics", async (req, res) => {
       response.offlineHtml = {
         exists: true,
         sizeMB: (stats.size / 1024 / 1024).toFixed(2),
-        sha256: hash
+        sha256: hash,
+        mtime: stats.mtime.toISOString()
       };
     }
 
-    // 2. Main ZIP check
+    // Main ZIP check
     let mainZipBuffer: Buffer | null = null;
     let mainZipSha256 = "";
     let mainZipSize = 0;
@@ -1022,11 +1168,12 @@ app.get("/api/mac-diagnostics", async (req, res) => {
       response.mainZip = {
         exists: true,
         sizeMB: (stats.size / 1024 / 1024).toFixed(2),
-        sha256: mainZipSha256
+        sha256: mainZipSha256,
+        mtime: stats.mtime.toISOString()
       };
     }
 
-    // 3. Parts checks
+    // Parts checks
     if (fs.existsSync(distMacDir)) {
       const files = fs.readdirSync(distMacDir)
         .filter(f => f.startsWith("Baltic_Master_Zen_macOS_M4.zip.part"))
@@ -1046,7 +1193,8 @@ app.get("/api/mac-diagnostics", async (req, res) => {
         return {
           name: file,
           size: stats.size,
-          sizeMB: (stats.size / 1024 / 1024).toFixed(2)
+          sizeMB: (stats.size / 1024 / 1024).toFixed(2),
+          mtime: stats.mtime.toISOString()
         };
       });
 
@@ -1066,10 +1214,138 @@ app.get("/api/mac-diagnostics", async (req, res) => {
       }
     }
 
+    // Read log tail (last 100 lines)
+    if (fs.existsSync(buildLogPath)) {
+      const logContent = fs.readFileSync(buildLogPath, "utf8");
+      const lines = logContent.split("\n");
+      response.logsTail = lines.slice(-100).join("\n");
+    } else {
+      response.logsTail = "Лог-файл сборки отсутствует. Запустите сборку для создания логов.";
+    }
+
+    // Construct programmatical actionable recommendations
+    const recommendations: string[] = [];
+    if (!writePermissionOk) {
+      recommendations.push("Критическая ошибка прав: Нет прав на запись в рабочую директорию. Процесс компиляции завершится сбоем.");
+    }
+    if (!sources.buildScriptExists) {
+      recommendations.push("Скрипт build-mac-app.js отсутствует в корне проекта. Сборка невозможна.");
+    }
+    if (!sources.generateHtmlScriptExists) {
+      recommendations.push("Скрипт generate-single-html.js отсутствует в корне проекта. Невозможно сгенерировать офлайн-HTML.");
+    }
+    if (!dependencies.archiver) {
+      recommendations.push("Зависимость 'archiver' отсутствует в node_modules. Пожалуйста, запустите установку зависимостей.");
+    }
+    if (!dependencies.jimp) {
+      recommendations.push("Зависимость 'jimp' отсутствует в node_modules. Конвертация иконки может не сработать.");
+    }
+    if (!dependencies.electronPackager) {
+      recommendations.push("Зависимость 'electron-packager' не установлена. Сборка macOS приложения завершится ошибкой.");
+    }
+    if (!response.offlineHtml.exists) {
+      recommendations.push("Адаптивный офлайн-HTML файл (baltic_master_zen.html) отсутствует. Рекомендуется нажать кнопку 'Пересобрать' для его генерации.");
+    }
+    if (macBuildState.status === "error") {
+      recommendations.push(`Последняя сборка завершилась ошибкой: "${macBuildState.error || "неизвестная ошибка"}". Изучите консольный лог сборки для выявления причины.`);
+    }
+    if (response.mainZip.exists && response.parts.length === 0) {
+      recommendations.push("Полный ZIP архив собран успешно, но сегменты для скачивания не нарезаны. Рекомендуется запустить полную очистку кэша и пересобрать.");
+    }
+    if (response.parts.length > 0 && response.assemblyIntegrity.status === "FAIL") {
+      recommendations.push("Критический сбой: Обнаружено несовпадение размеров или контрольных сумм между ZIP архивом и нарезанными сегментами. Нажмите 'Очистить кэш' и выполните пересборку заново.");
+    }
+    if (parseFloat(system.memoryFreeMB) < 300) {
+      recommendations.push("Предупреждение: На сервере осталось менее 300 MB свободной памяти. Сборка может упасть из-за нехватки оперативной памяти (OOM).");
+    }
+
+    response.recommendations = recommendations;
+
     res.json(response);
   } catch (err: any) {
     console.error("macOS Diagnostics Error:", err);
     res.status(500).json({ error: err.message || "Ошибка диагностики macOS." });
+  }
+});
+
+app.post("/api/mac-diagnostics/rebuild", async (req, res) => {
+  try {
+    const serverUrl = getSecureServerUrl(req);
+    // Trigger build asynchronously without blocking the REST call
+    runMacBuild(serverUrl).catch(err => {
+      console.error("Background rebuild failed:", err);
+    });
+    res.json({
+      success: true,
+      message: "Сборка macOS-приложения запущена в фоновом режиме на сервере.",
+      state: macBuildState
+    });
+  } catch (err: any) {
+    console.error("Rebuild trigger error:", err);
+    res.status(500).json({ error: err.message || "Не удалось инициировать сборку." });
+  }
+});
+
+app.post("/api/mac-diagnostics/clean-cache", async (req, res) => {
+  try {
+    if (macBuildState.isBuilding) {
+      return res.status(400).json({ error: "Нельзя очистить кэш во время активной сборки приложения." });
+    }
+
+    const workspaceRoot = process.cwd();
+    const distMacDir = path.join(workspaceRoot, "dist-mac");
+    const desktopBuildDir = path.join(workspaceRoot, "desktop-build");
+    const buildLogPath = path.join(workspaceRoot, "build-mac-app.log");
+    const offlineHtmlPath = path.join(workspaceRoot, "baltic_master_zen.html");
+
+    let count = 0;
+    // Clear dist-mac
+    if (fs.existsSync(distMacDir)) {
+      fs.rmSync(distMacDir, { recursive: true, force: true });
+      count++;
+    }
+    // Clear desktop-build
+    if (fs.existsSync(desktopBuildDir)) {
+      fs.rmSync(desktopBuildDir, { recursive: true, force: true });
+      count++;
+    }
+    // Delete log
+    if (fs.existsSync(buildLogPath)) {
+      fs.unlinkSync(buildLogPath);
+      count++;
+    }
+    // Delete offline HTML
+    if (fs.existsSync(offlineHtmlPath)) {
+      fs.unlinkSync(offlineHtmlPath);
+      count++;
+    }
+
+    // Reset build state
+    macBuildState.isBuilding = false;
+    macBuildState.startTime = null;
+    macBuildState.endTime = null;
+    macBuildState.status = "idle";
+    macBuildState.error = null;
+    macBuildState.currentStep = "Ожидание запуска (кэш очищен)";
+
+    res.json({
+      success: true,
+      message: "Кэш сборки, временные папки и лог-файлы успешно очищены.",
+      deletedCount: count,
+      state: macBuildState
+    });
+  } catch (err: any) {
+    console.error("Clean cache error:", err);
+    res.status(500).json({ error: err.message || "Не удалось очистить кэш сборки." });
+  }
+});
+
+app.get("/api/mac-diagnostics/logs", (req, res) => {
+  const buildLogPath = path.join(process.cwd(), "build-mac-app.log");
+  if (fs.existsSync(buildLogPath)) {
+    res.sendFile(buildLogPath);
+  } else {
+    res.status(404).send("Лог-файл сборки не найден.");
   }
 });
 

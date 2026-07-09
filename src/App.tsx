@@ -89,6 +89,8 @@ export default function App() {
 
   // macOS App download modal states
   const [showMacDownloadModal, setShowMacDownloadModal] = useState<boolean>(false);
+  const [activeMacTab, setActiveMacTab] = useState<"download" | "diagnostics">("download");
+  const [rebuildStatus, setRebuildStatus] = useState<string>("");
   const [macPartsInfo, setMacPartsInfo] = useState<{
     totalParts: number;
     parts: Array<{ name: string; suffix: string; size: number; sizeMB: string }>;
@@ -96,9 +98,46 @@ export default function App() {
     mergeCommand: string;
   } | null>(null);
   const [macDiagnostics, setMacDiagnostics] = useState<{
-    offlineHtml: { exists: boolean; sizeMB: string; sha256: string };
-    mainZip: { exists: boolean; sizeMB: string; sha256: string };
-    parts: Array<{ name: string; size: number; sizeMB: string }>;
+    system: {
+      nodeVersion: string;
+      platform: string;
+      arch: string;
+      memoryFreeMB: string;
+      memoryTotalMB: string;
+      uptimeHours: string;
+      writePermissionOk: boolean;
+    };
+    sources: {
+      buildScriptExists: boolean;
+      generateHtmlScriptExists: boolean;
+      sourceIconExists: boolean;
+      sourceIconSizeKB: string;
+    };
+    electronFiles: {
+      folderExists: boolean;
+      packageJsonExists: boolean;
+      mainCjsExists: boolean;
+      preloadCjsExists: boolean;
+      htmlExists: boolean;
+      iconPngExists: boolean;
+    };
+    dependencies: {
+      archiver: boolean;
+      jimp: boolean;
+      electronPackager: boolean;
+      electronBuilder: boolean;
+    };
+    buildState: {
+      isBuilding: boolean;
+      startTime: string | null;
+      endTime: string | null;
+      status: "idle" | "building" | "success" | "error";
+      error: string | null;
+      currentStep: string;
+    };
+    offlineHtml: { exists: boolean; sizeMB: string; sha256: string; mtime: string | null };
+    mainZip: { exists: boolean; sizeMB: string; sha256: string; mtime: string | null };
+    parts: Array<{ name: string; size: number; sizeMB: string; mtime: string | null }>;
     assemblyIntegrity: {
       partsCount: number;
       combinedSizeMB: string;
@@ -107,17 +146,54 @@ export default function App() {
       matchesMainZipSha256: boolean;
       status: "PASS" | "FAIL";
     };
-    electronBuildInfo: {
-      desktopBuildFolderExists: boolean;
-      electronVersion: string;
-      macOSArch: string;
-    };
+    logsTail: string;
+    recommendations?: string[];
   } | null>(null);
   const [loadingParts, setLoadingParts] = useState<boolean>(false);
+  const [logFilter, setLogFilter] = useState<"all" | "error" | "warn" | "info" | "steps">("all");
+  const [logSearch, setLogSearch] = useState<string>("");
 
-  const handleOpenMacDownload = async () => {
-    setShowMacDownloadModal(true);
-    setLoadingParts(true);
+  const formattedLogLines = useMemo(() => {
+    if (!macDiagnostics?.logsTail) return [];
+    const lines = macDiagnostics.logsTail.split("\n");
+    return lines
+      .filter(line => {
+        if (!line.trim()) return false;
+        if (logSearch && !line.toLowerCase().includes(logSearch.toLowerCase())) {
+          return false;
+        }
+        const lower = line.toLowerCase();
+        if (logFilter === "error") {
+          return lower.includes("error") || lower.includes("fail") || lower.includes("сбой") || lower.includes("ошибка");
+        }
+        if (logFilter === "warn") {
+          return lower.includes("warn") || lower.includes("warning") || lower.includes("предупреждение");
+        }
+        if (logFilter === "info") {
+          return !lower.includes("error") && !lower.includes("warn") && !lower.includes("warning") && !lower.includes("step") && !line.includes("===");
+        }
+        if (logFilter === "steps") {
+          return lower.includes("step") || line.includes("===") || lower.includes("building");
+        }
+        return true;
+      })
+      .map((line, idx) => {
+        let className = "text-slate-300";
+        const lower = line.toLowerCase();
+        if (lower.includes("error") || lower.includes("fail") || lower.includes("сбой") || lower.includes("ошибка")) {
+          className = "text-rose-400 font-bold";
+        } else if (lower.includes("warn") || lower.includes("warning") || lower.includes("предупреждение")) {
+          className = "text-amber-400 font-semibold";
+        } else if (lower.includes("step") || line.includes("===") || lower.includes("starting")) {
+          className = "text-indigo-400 font-bold uppercase tracking-wider bg-indigo-950/30 py-0.5 px-2 rounded border-l-2 border-indigo-500 my-1 font-mono text-[11px]";
+        } else if (lower.includes("success") || lower.includes("успешно") || lower.includes("done")) {
+          className = "text-emerald-400 font-semibold";
+        }
+        return { text: line, className, id: idx };
+      });
+  }, [macDiagnostics?.logsTail, logFilter, logSearch]);
+
+  const refreshMacDiagnostics = async () => {
     try {
       const [resParts, resDiag] = await Promise.all([
         robustFetch(getApiUrl("/api/mac-app-parts-info")),
@@ -127,19 +203,95 @@ export default function App() {
       if (resParts.ok) {
         const partsData = await resParts.json();
         setMacPartsInfo(partsData);
-      } else {
-        throw new Error("Не удалось получить информацию о частях.");
       }
-
       if (resDiag.ok) {
         const diagData = await resDiag.json();
         setMacDiagnostics(diagData);
       }
     } catch (err) {
+      console.warn("Error refreshing diagnostics:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (!showMacDownloadModal) return;
+
+    // Fast polling if currently building, slower polling if idle
+    const isBuilding = macDiagnostics?.buildState?.isBuilding;
+    const intervalTime = isBuilding ? 2000 : 8000;
+
+    const timer = setInterval(() => {
+      refreshMacDiagnostics();
+    }, intervalTime);
+
+    return () => clearInterval(timer);
+  }, [showMacDownloadModal, macDiagnostics?.buildState?.isBuilding]);
+
+  const handleOpenMacDownload = async () => {
+    setShowMacDownloadModal(true);
+    setLoadingParts(true);
+    try {
+      await refreshMacDiagnostics();
+    } catch (err) {
       console.warn(err);
       showToast("Ошибка получения информации о частях macOS приложения", "danger");
     } finally {
       setLoadingParts(false);
+    }
+  };
+
+  const triggerMacRebuild = async () => {
+    setRebuildStatus("Запуск...");
+    try {
+      const res = await robustFetch(getApiUrl("/api/mac-diagnostics/rebuild"), {
+        method: "POST"
+      });
+      if (res.ok) {
+        showToast("Сборка macOS приложения успешно запущена на сервере", "success");
+        // Update state to show building immediately
+        setMacDiagnostics(prev => prev ? {
+          ...prev,
+          buildState: {
+            isBuilding: true,
+            startTime: new Date().toISOString(),
+            endTime: null,
+            status: "building",
+            error: null,
+            currentStep: "Запуск фонового процесса..."
+          }
+        } : null);
+        setTimeout(() => refreshMacDiagnostics(), 800);
+      } else {
+        showToast("Не удалось запустить сборку на сервере", "danger");
+      }
+    } catch (err) {
+      console.error(err);
+      showToast("Ошибка сети при запуске сборки macOS", "danger");
+    } finally {
+      setRebuildStatus("");
+    }
+  };
+
+  const triggerMacCleanCache = async () => {
+    if (!window.confirm("Вы действительно хотите полностью очистить кэш сборки, временные файлы и лог-файлы? Все скомпилированные файлы macOS будут удалены.")) {
+      return;
+    }
+    setRebuildStatus("Очистка...");
+    try {
+      const res = await robustFetch(getApiUrl("/api/mac-diagnostics/clean-cache"), {
+        method: "POST"
+      });
+      if (res.ok) {
+        showToast("Кэш сборки успешно очищен. Логи обнулены.", "success");
+        await refreshMacDiagnostics();
+      } else {
+        showToast("Не удалось очистить кэш на сервере", "danger");
+      }
+    } catch (err) {
+      console.error(err);
+      showToast("Ошибка сети при очистке кэша", "danger");
+    } finally {
+      setRebuildStatus("");
     }
   };
 
@@ -5852,23 +6004,52 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* Content */}
-                <div className="p-6 space-y-5">
-                  <div className="bg-amber-50 border border-amber-200/80 rounded-xl p-4 flex gap-3 text-xs text-amber-900 leading-relaxed">
-                    <Sparkles className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-bold mb-1">Почему приложение скачивается по частям?</p>
-                      Платформа разработки AI Studio имеет сетевое ограничение на размер скачиваемого файла (максимум 32 МБ). Полное десктопное приложение весит 118 МБ, поэтому мы разделили его на безопасные сегменты по 24 МБ. Это гарантирует 100% успешную загрузку без сбоев соединения!
-                    </div>
-                  </div>
+                {/* Tabs Selector */}
+                <div className="flex border-b border-slate-100 bg-slate-50 px-6 pt-2">
+                  <button
+                    onClick={() => setActiveMacTab("download")}
+                    className={`flex items-center gap-2 py-2.5 px-4 text-xs font-bold border-b-2 transition cursor-pointer ${
+                      activeMacTab === "download"
+                        ? "border-indigo-600 text-indigo-600"
+                        : "border-transparent text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    <Download className="w-4 h-4" />
+                    Скачивание и запуск
+                  </button>
+                  <button
+                    onClick={() => setActiveMacTab("diagnostics")}
+                    className={`flex items-center gap-2 py-2.5 px-4 text-xs font-bold border-b-2 transition cursor-pointer relative ${
+                      activeMacTab === "diagnostics"
+                        ? "border-indigo-600 text-indigo-600"
+                        : "border-transparent text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    <Activity className="w-4 h-4" />
+                    Экспресс-Диагностика
+                    {macDiagnostics?.buildState?.isBuilding && (
+                      <span className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping" />
+                    )}
+                  </button>
+                </div>
 
+                {/* Content */}
+                <div className="p-6 max-h-[500px] overflow-y-auto space-y-5">
                   {loadingParts ? (
                     <div className="flex flex-col items-center justify-center py-12 space-y-3">
                       <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-                      <p className="text-xs font-bold text-slate-500">Подготовка частей файла к скачиванию...</p>
+                      <p className="text-xs font-bold text-slate-500">Подготовка информации к отображению...</p>
                     </div>
-                  ) : (
+                  ) : activeMacTab === "download" ? (
                     <>
+                      <div className="bg-amber-50 border border-amber-200/80 rounded-xl p-4 flex gap-3 text-xs text-amber-900 leading-relaxed">
+                        <Sparkles className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-bold mb-1">Почему приложение скачивается по частям?</p>
+                          Платформа разработки AI Studio имеет сетевое ограничение на размер скачиваемого файла (максимум 32 МБ). Полное десктопное приложение весит 118 МБ, поэтому мы разделили его на безопасные сегменты по 24 МБ. Это гарантирует 100% успешную загрузку без сбоев соединения!
+                        </div>
+                      </div>
+
                       {/* Step 1: Download Parts */}
                       <div className="space-y-3">
                         <div className="flex items-center gap-2 font-bold text-xs text-slate-800">
@@ -5879,30 +6060,38 @@ export default function App() {
                         <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-4">
                           <button
                             onClick={downloadAllParts}
-                            className="w-full inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition shadow-sm cursor-pointer border border-indigo-500"
+                            disabled={!macPartsInfo || macPartsInfo.parts.length === 0}
+                            className="w-full inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition shadow-sm cursor-pointer border border-indigo-500 disabled:bg-slate-200 disabled:text-slate-400 disabled:border-slate-100"
                           >
                             <Download className="w-4 h-4" />
                             Скачать все части автоматически (в один клик)
                           </button>
 
-                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                            {macPartsInfo?.parts.map((part) => (
-                              <a
-                                key={part.suffix}
-                                href={getApiUrl(`/api/download-mac-zip-part/${part.suffix}`)}
-                                download={part.name}
-                                className="flex items-center justify-between p-2 bg-white rounded-lg border border-slate-200/60 hover:border-indigo-300 hover:bg-indigo-50/10 text-xs text-slate-700 font-medium transition cursor-pointer"
-                              >
-                                <span className="font-mono text-[11px] text-slate-500">Часть {part.suffix.toUpperCase()}</span>
-                                <span className="text-[10px] text-slate-400 font-mono">({part.sizeMB} MB)</span>
-                              </a>
-                            ))}
-                          </div>
+                          {macPartsInfo && macPartsInfo.parts.length > 0 ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                              {macPartsInfo.parts.map((part) => (
+                                <a
+                                  key={part.suffix}
+                                  href={getApiUrl(`/api/download-mac-zip-part/${part.suffix}`)}
+                                  download={part.name}
+                                  className="flex items-center justify-between p-2 bg-white rounded-lg border border-slate-200/60 hover:border-indigo-300 hover:bg-indigo-50/10 text-xs text-slate-700 font-medium transition cursor-pointer"
+                                >
+                                  <span className="font-mono text-[11px] text-slate-500">Часть {part.suffix.toUpperCase()}</span>
+                                  <span className="text-[10px] text-slate-400 font-mono">({part.sizeMB} MB)</span>
+                                </a>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-center py-4 bg-rose-50 rounded-xl border border-rose-100 text-rose-800 text-xs">
+                              <p className="font-bold">Файлы сегментов отсутствуют на сервере</p>
+                              Перейдите во вкладку <strong>Экспресс-Диагностика</strong> ниже и нажмите <strong>Пересобрать</strong> для автоматической генерации приложения.
+                            </div>
+                          )}
                         </div>
                       </div>
 
                       {/* Integrity and Health Checks (macOS Diagnostics) */}
-                      {macDiagnostics && (
+                      {macDiagnostics && macDiagnostics.parts.length > 0 && (
                         <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/60 space-y-3">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2 font-bold text-[11px] uppercase tracking-wider text-slate-700">
@@ -5992,6 +6181,335 @@ export default function App() {
                         </div>
                       </div>
                     </>
+                  ) : (
+                    /* Diagnostics Tab */
+                    <div className="space-y-4">
+                      {/* Interactive Diagnostics Recommendations Engine */}
+                      {macDiagnostics?.recommendations && macDiagnostics.recommendations.length > 0 && (
+                        <div className="bg-rose-50/95 border-2 border-rose-200/90 rounded-xl p-4 space-y-3 shadow-sm animate-in fade-in duration-300">
+                          <div className="flex items-center gap-2 text-rose-800 font-bold text-xs sm:text-sm">
+                            <AlertCircle className="w-5 h-5 text-rose-600 flex-shrink-0" />
+                            <span>Выявленные проблемы и рекомендации ({macDiagnostics.recommendations.length}):</span>
+                          </div>
+                          <ul className="space-y-2 text-rose-950 text-[11px] sm:text-xs pl-5 list-disc leading-relaxed">
+                            {macDiagnostics.recommendations.map((rec, i) => (
+                              <li key={i} className="font-medium">{rec}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Live Compilation Status Control */}
+                      <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-4 space-y-3.5">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 font-bold text-xs text-slate-800">
+                            <RefreshCw className={`w-4 h-4 text-indigo-500 ${macDiagnostics?.buildState?.isBuilding ? "animate-spin" : ""}`} />
+                            Фоновый компилятор десктопного ПО
+                          </div>
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                            macDiagnostics?.buildState?.isBuilding
+                              ? "bg-indigo-50 text-indigo-700 border border-indigo-200 animate-pulse"
+                              : macDiagnostics?.buildState?.status === "success"
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              : macDiagnostics?.buildState?.status === "error"
+                              ? "bg-rose-50 text-rose-700 border border-rose-200"
+                              : "bg-slate-100 text-slate-600 border border-slate-200"
+                          }`}>
+                            {macDiagnostics?.buildState?.isBuilding ? "КОМПИЛЯЦИЯ..." : macDiagnostics?.buildState?.status?.toUpperCase() || "ОЖИДАНИЕ"}
+                          </span>
+                        </div>
+
+                        {macDiagnostics?.buildState?.isBuilding && (
+                          <div className="space-y-1 bg-white p-2.5 rounded-lg border border-indigo-100">
+                            <div className="flex justify-between text-[10px] text-indigo-500 font-bold">
+                              <span>ПРОГРЕСС СБОРКИ И УПАКОВКИ</span>
+                              <span className="animate-pulse">АКТИВНЫЙ ПРОЦЕСС</span>
+                            </div>
+                            <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden mt-1">
+                              <div className="bg-gradient-to-r from-indigo-500 to-indigo-600 h-2 rounded-full animate-pulse" style={{ width: "80%" }} />
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="bg-white p-2.5 rounded-lg border border-slate-100 space-y-1">
+                            <span className="text-[9px] text-slate-400 font-bold uppercase">Активный этап</span>
+                            <p className="font-bold text-slate-700 text-xs truncate">
+                              {macDiagnostics?.buildState?.isBuilding
+                                ? macDiagnostics.buildState.currentStep
+                                : macDiagnostics?.buildState?.status === "success"
+                                ? "Сборка успешно завершена!"
+                                : macDiagnostics?.buildState?.error || "Простаивает в ожидания задач"}
+                            </p>
+                          </div>
+                          
+                          <div className="bg-white p-2.5 rounded-lg border border-slate-100 flex items-center justify-between">
+                            <div className="space-y-1">
+                              <span className="text-[9px] text-slate-400 font-bold uppercase">Время старта</span>
+                              <p className="font-mono text-[10px] text-slate-500">
+                                {macDiagnostics?.buildState?.startTime
+                                  ? new Date(macDiagnostics.buildState.startTime).toLocaleTimeString()
+                                  : "—"}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={triggerMacCleanCache}
+                                disabled={macDiagnostics?.buildState?.isBuilding || !!rebuildStatus}
+                                className="p-1.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 disabled:opacity-50 transition cursor-pointer flex items-center justify-center"
+                                title="Полная очистка кэша, логов и собранных ресурсов"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={triggerMacRebuild}
+                                disabled={macDiagnostics?.buildState?.isBuilding || !!rebuildStatus}
+                                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-[11px] font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm border border-indigo-500"
+                              >
+                                {macDiagnostics?.buildState?.isBuilding ? (
+                                  <>
+                                    <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    Сборка...
+                                  </>
+                                ) : (
+                                  <>
+                                    <RefreshCw className="w-3 h-3" />
+                                    Пересобрать
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Server, Files & Dependencies 3-column Grid */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {/* Server Specifications with Disk Access Check */}
+                        <div className="bg-white rounded-xl border border-slate-200/60 p-3.5 space-y-2.5">
+                          <h4 className="font-bold text-xs text-slate-800 flex items-center gap-1.5 border-b border-slate-100 pb-1.5">
+                            <Server className="w-4 h-4 text-indigo-500" />
+                            Параметры Окружения
+                          </h4>
+                          <div className="space-y-1.5 text-[11px] text-slate-600">
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">Node.js / OC:</span>
+                              <span className="font-mono font-medium text-slate-800 truncate max-w-[130px]" title={macDiagnostics?.system?.nodeVersion}>
+                                {macDiagnostics?.system?.nodeVersion} ({macDiagnostics?.system?.platform})
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">ОЗУ Свободно:</span>
+                              <span className="font-mono font-medium text-slate-800">{macDiagnostics?.system?.memoryFreeMB} MB / {macDiagnostics?.system?.memoryTotalMB} MB</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">Uptime Сервера:</span>
+                              <span className="font-mono font-medium text-slate-800">{macDiagnostics?.system?.uptimeHours} ч.</span>
+                            </div>
+                            <div className="flex justify-between items-center border-t border-slate-50 pt-1.5 mt-1.5">
+                              <span className="text-slate-400">Запись на диск:</span>
+                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                macDiagnostics?.system?.writePermissionOk ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700 animate-pulse"
+                              }`}>
+                                {macDiagnostics?.system?.writePermissionOk ? "ДОСТУПНО" : "БЛОКИРОВКА"}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* File requirements check */}
+                        <div className="bg-white rounded-xl border border-slate-200/60 p-3.5 space-y-2.5">
+                          <h4 className="font-bold text-xs text-slate-800 flex items-center gap-1.5 border-b border-slate-100 pb-1.5">
+                            <FileText className="w-4 h-4 text-indigo-500" />
+                            Проверка Файлов
+                          </h4>
+                          <div className="space-y-1.5 text-[11px]">
+                            <div className="flex justify-between items-center">
+                              <span className="text-slate-500">Сценарий build-mac-app</span>
+                              <span className={`font-bold px-1.5 py-0.5 rounded text-[9px] ${macDiagnostics?.sources?.buildScriptExists ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                                {macDiagnostics?.sources?.buildScriptExists ? "ОК" : "НЕТ"}
+                              </span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-slate-500">Генератор HTML</span>
+                              <span className={`font-bold px-1.5 py-0.5 rounded text-[9px] ${macDiagnostics?.sources?.generateHtmlScriptExists ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                                {macDiagnostics?.sources?.generateHtmlScriptExists ? "ОК" : "НЕТ"}
+                              </span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-slate-500">Исходная Иконка (src)</span>
+                              <span className={`font-bold px-1.5 py-0.5 rounded text-[9px] ${macDiagnostics?.sources?.sourceIconExists ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                                {macDiagnostics?.sources?.sourceIconExists ? `${macDiagnostics.sources.sourceIconSizeKB} KB` : "НЕТ"}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Libraries Checks */}
+                        <div className="bg-white rounded-xl border border-slate-200/60 p-3.5 space-y-2.5">
+                          <h4 className="font-bold text-xs text-slate-800 flex items-center gap-1.5 border-b border-slate-100 pb-1.5">
+                            <Wrench className="w-4 h-4 text-indigo-500" />
+                            Зависимости Сборщика
+                          </h4>
+                          <div className="space-y-1.5 text-[11px]">
+                            <div className="flex justify-between items-center">
+                              <span className="text-slate-500 font-mono">archiver:</span>
+                              <span className={`font-bold px-1.5 py-0.5 rounded text-[9px] ${macDiagnostics?.dependencies?.archiver ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                                {macDiagnostics?.dependencies?.archiver ? "ОК" : "НЕТ"}
+                              </span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-slate-500 font-mono">jimp (иконки):</span>
+                              <span className={`font-bold px-1.5 py-0.5 rounded text-[9px] ${macDiagnostics?.dependencies?.jimp ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                                {macDiagnostics?.dependencies?.jimp ? "ОК" : "НЕТ"}
+                              </span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-slate-500 font-mono">electron-packager:</span>
+                              <span className={`font-bold px-1.5 py-0.5 rounded text-[9px] ${macDiagnostics?.dependencies?.electronPackager ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                                {macDiagnostics?.dependencies?.electronPackager ? "ОК" : "НЕТ"}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Package Chunks Verification */}
+                      <div className="bg-white rounded-xl border border-slate-200/60 p-3.5 space-y-2.5">
+                        <h4 className="font-bold text-xs text-slate-800 flex items-center justify-between border-b border-slate-100 pb-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <ShieldCheck className="w-4 h-4 text-indigo-500" />
+                            Статус Целостности Сегментов Архива
+                          </div>
+                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                            macDiagnostics?.assemblyIntegrity?.status === "PASS"
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
+                              : "bg-rose-50 text-rose-700 border border-rose-100"
+                          }`}>
+                            {macDiagnostics?.assemblyIntegrity?.status === "PASS" ? "КРИПТО-СУММЫ СОВПАДАЮТ" : "ОШИБКА ЦЕЛОСТНОСТИ"}
+                          </span>
+                        </h4>
+
+                        <div className="text-[11px] space-y-1.5">
+                          <div className="flex justify-between items-center text-slate-400 font-bold text-[9px] uppercase tracking-wider pb-1">
+                            <span>Название Сегмента</span>
+                            <span>Размер</span>
+                            <span>Доступность</span>
+                          </div>
+                          
+                          <div className="flex justify-between items-center py-1.5 border-b border-slate-50">
+                            <span className="font-mono text-slate-700 font-medium">Baltic_Master_Zen_macOS_M4.zip</span>
+                            <span className="font-mono text-slate-600">{macDiagnostics?.mainZip?.exists ? `${macDiagnostics.mainZip.sizeMB} MB` : "—"}</span>
+                            <span className={`font-bold text-[10px] ${macDiagnostics?.mainZip?.exists ? "text-emerald-600" : "text-rose-600"}`}>
+                              {macDiagnostics?.mainZip?.exists ? "ГОТОВ" : "ОТСУТСТВУЕТ"}
+                            </span>
+                          </div>
+
+                          {/* Render parts if exists */}
+                          {macDiagnostics?.parts && macDiagnostics.parts.length > 0 ? (
+                            macDiagnostics.parts.map((p) => (
+                              <div key={p.name} className="flex justify-between items-center py-1 border-b border-slate-50/50 font-mono text-[10px] text-slate-500">
+                                <span className="flex items-center gap-1">
+                                  <span className="text-slate-300">├─</span> {p.name}
+                                </span>
+                                <span>{p.sizeMB} MB</span>
+                                <span className="text-emerald-600 font-bold text-[9px] bg-emerald-50 px-1 py-0.2 rounded">OK</span>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-center py-4 text-rose-700 bg-rose-50/50 rounded-xl border border-rose-100 space-y-1 my-2">
+                              <p className="font-bold">⚠ Сегменты *.zip.partaa-ae не обнаружены на сервере!</p>
+                              <p className="text-[10px] text-slate-500">Для скачивания необходимо сгенерировать новую сборку. Нажмите кнопку <strong>Пересобрать</strong> выше.</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Compilation Terminal Output Logs with interactive Search & Filter */}
+                      <div className="space-y-2">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                          <span className="font-bold flex items-center gap-1 text-xs text-slate-700">
+                            <Terminal className="w-4 h-4 text-indigo-500" />
+                            Интерактивный анализатор логов (build-mac-app.log)
+                          </span>
+                          
+                          <div className="flex items-center gap-1.5 self-end">
+                            <a
+                              href={getApiUrl("/api/mac-diagnostics/logs")}
+                              download="build-mac-app.log"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="px-2.5 py-1 text-[10px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 rounded-lg flex items-center gap-1 cursor-pointer transition"
+                              title="Скачать весь лог-файл целиком"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              Скачать лог
+                            </a>
+                          </div>
+                        </div>
+
+                        {/* Search and Filters toolbar */}
+                        <div className="flex flex-col sm:flex-row gap-2 bg-slate-100 p-2 rounded-xl border border-slate-200/60">
+                          {/* Log search input */}
+                          <div className="relative flex-1">
+                            <Search className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" />
+                            <input
+                              type="text"
+                              value={logSearch}
+                              onChange={(e) => setLogSearch(e.target.value)}
+                              placeholder="Поиск по тексту лога..."
+                              className="w-full pl-8 pr-3 py-1.5 bg-white text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
+                            />
+                            {logSearch && (
+                              <button
+                                onClick={() => setLogSearch("")}
+                                className="absolute right-2 top-2 text-slate-400 hover:text-slate-600 text-xs px-1"
+                              >
+                                ×
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Quick filters */}
+                          <div className="flex flex-wrap items-center gap-1">
+                            {(["all", "error", "warn", "steps", "info"] as const).map((filter) => (
+                              <button
+                                key={filter}
+                                onClick={() => setLogFilter(filter)}
+                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide transition cursor-pointer ${
+                                  logFilter === filter
+                                    ? "bg-slate-850 text-white shadow-sm"
+                                    : "bg-white hover:bg-slate-50 text-slate-600 border border-slate-200"
+                                }`}
+                              >
+                                {filter === "all" ? "Все" :
+                                 filter === "error" ? "Ошибки" :
+                                 filter === "warn" ? "Предупреждения" :
+                                 filter === "steps" ? "Шаги" : "Инфо"}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Custom interactive terminal screen */}
+                        <div className="bg-slate-950 rounded-xl border border-slate-800 p-3 h-56 overflow-y-auto font-mono text-[10.5px] space-y-1.5 max-w-full select-all shadow-inner">
+                          {formattedLogLines.length > 0 ? (
+                            formattedLogLines.map((line) => (
+                              <div key={line.id} className={`${line.className} break-all flex items-start gap-1 leading-relaxed`}>
+                                <span className="text-slate-600 select-none text-[9px] pt-0.5 flex-shrink-0">{(line.id + 1).toString().padStart(3, "0")}</span>
+                                <span>{line.text}</span>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-center py-8 text-slate-500 font-sans italic text-xs">
+                              {macDiagnostics?.logsTail 
+                                ? "Нет логов, соответствующих выбранным фильтрам поиска." 
+                                : "Логи компиляции пусты. Запустите Сборку для генерации логов."}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   )}
                 </div>
 
