@@ -437,7 +437,7 @@ export default function App() {
   const [isApiKeyPanelHidden, setIsApiKeyPanelHidden] = useState<boolean>(false);
 
   // App versioning and updates
-  const [appVersion, setAppVersion] = useState<string>("2.9.1");
+  const [appVersion, setAppVersion] = useState<string>("2.9.4");
   const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "available" | "downloading" | "up_to_date" | "error">("idle");
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [updateInfo, setUpdateInfo] = useState<{ latestVersion: string; changelog: string[]; downloadUrl?: string } | null>(null);
@@ -446,6 +446,7 @@ export default function App() {
   const [customUpdateManifestUrl, setCustomUpdateManifestUrl] = useState<string>((import.meta as any).env.VITE_UPDATE_MANIFEST_URL || "");
   const [showAdvancedUpdateSettings, setShowAdvancedUpdateSettings] = useState<boolean>(false);
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState<boolean>(true);
+  const [liveChangelog, setLiveChangelog] = useState<{ latestVersion: string; changelog: string[]; releaseDate?: string } | null>(null);
 
   // GitHub Sync states
   const [githubToken, setGithubToken] = useState<string>("SYSTEM_TOKEN_PLACEHOLDER");
@@ -1142,7 +1143,7 @@ export default function App() {
       // Load app version
       const savedVersion = localStorage.getItem("bm26_app_version");
       if (savedVersion) {
-        const bundledVersion = "2.9.1";
+        const bundledVersion = "2.9.4";
         const isNewerVersion = (newVer: string, oldVer: string): boolean => {
           const newParts = newVer.split('.').map(Number);
           const oldParts = oldVer.split('.').map(Number);
@@ -1161,7 +1162,7 @@ export default function App() {
           setAppVersion(bundledVersion);
         }
       } else {
-        localStorage.setItem("bm26_app_version", "2.9.1");
+        localStorage.setItem("bm26_app_version", "2.9.4");
       }
 
       // Load custom API server URL
@@ -1853,6 +1854,29 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [appVersion, customUpdateManifestUrl, autoUpdateEnabled]);
+
+  // Fetch live changelog manifest on startup to automatically update Changelog tab
+  useEffect(() => {
+    const fetchLiveChangelog = async () => {
+      try {
+        const updateUrl = customUpdateManifestUrl.trim() !== ""
+          ? customUpdateManifestUrl.trim()
+          : getApiUrl("/api/check-update");
+        console.log("Silent update.json fetch initiated for automatic changelog sync...");
+        const res = await fetchGithubFile(updateUrl);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.changelog) {
+            console.log("Successfully fetched live changelog details dynamically:", data);
+            setLiveChangelog(data);
+          }
+        }
+      } catch (err) {
+        console.warn("Silent changelog fetch failed:", err);
+      }
+    };
+    fetchLiveChangelog();
+  }, [customUpdateManifestUrl]);
 
   // Handle GitHub sync request
   const handleGithubSync = async () => {
@@ -4157,16 +4181,42 @@ export default function App() {
                       История изменений (Changelog)
                     </h3>
                     <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full border border-indigo-100 uppercase tracking-wide">
-                      v2.9.1 Stable
+                      v{appVersion} Stable
                     </span>
                   </div>
 
                   <div className="space-y-5">
-                    {/* v2.9.1 */}
+                    {/* Live Dynamic Changelog from update.json */}
+                    {liveChangelog && (
+                      <div className="relative pl-6 pb-4 border-l-2 border-emerald-500 bg-emerald-50/20 p-3 rounded-r-xl">
+                        <div className="absolute -left-[7px] top-4 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-white shadow-sm" />
+                        <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                          <span className="text-xs font-black text-white bg-emerald-600 px-2 py-0.5 rounded-lg">v{liveChangelog.latestVersion}</span>
+                          <span className="text-[10px] text-slate-500 font-bold">Актуальные изменения</span>
+                          {appVersion === liveChangelog.latestVersion ? (
+                            <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded-md">Текущая версия</span>
+                          ) : (
+                            <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.5 rounded-md">Доступно обновление</span>
+                          )}
+                        </div>
+                        <div className="text-xs font-bold text-slate-800 mb-1">
+                          Динамический лог изменений с сервера/GitHub:
+                        </div>
+                        <ul className="text-[11px] text-slate-600 space-y-1 list-disc pl-4 leading-relaxed">
+                          {liveChangelog.changelog && liveChangelog.changelog.map((item, idx) => (
+                            <li key={idx} className="flex items-start gap-1.5">
+                              <span className="text-emerald-500 font-bold mt-0.5">•</span>
+                              <span>{item}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {/* v2.9.3 */}
                     <div className="relative pl-6 pb-4 border-l-2 border-indigo-100">
                       <div className="absolute -left-[7px] top-1.5 w-3.5 h-3.5 rounded-full bg-indigo-600 border-2 border-white shadow-sm" />
                       <div className="flex items-center gap-2 mb-1.5">
-                        <span className="text-xs font-black text-slate-900 bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-lg">v2.9.1</span>
+                        <span className="text-xs font-black text-slate-900 bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-lg">v2.9.3</span>
                         <span className="text-[10px] text-slate-400 font-bold">09.07.2026</span>
                         <span className="text-[10px] bg-emerald-50 text-emerald-700 font-bold px-1.5 py-0.5 rounded-md">Текущая версия</span>
                       </div>

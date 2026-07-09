@@ -11,6 +11,16 @@ const Jimp = JimpLib.Jimp || JimpLib;
 const workspaceRoot = process.cwd();
 const buildDir = path.join(workspaceRoot, "desktop-build");
 
+// Read current version from root package.json dynamically
+let appVersion = "2.9.4";
+try {
+  const rootPkg = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "package.json"), "utf8"));
+  appVersion = rootPkg.version || "2.9.4";
+  console.log(`Loaded root version ${appVersion} dynamically for macOS packaging.`);
+} catch (e) {
+  console.warn("Failed to read root package.json version, falling back:", e);
+}
+
 console.log("=== STARTING MACOS APP BUILD PROCESS ===");
 
 // 1. Ensure the offline HTML is fresh
@@ -66,7 +76,7 @@ if (fs.existsSync(iconSource)) {
 console.log("Step 3: Creating desktop package.json...");
 const packageJson = {
   name: "baltic-master-zen",
-  version: "2.9.0",
+  version: appVersion,
   description: "Baltic Master Zen - Автоматизация SEO и генерация контента",
   main: "main.cjs",
   author: "Baltic Master Service",
@@ -351,10 +361,11 @@ try {
   // Generate local update.json manifest so it is always present after a new build
   console.log("Step 6.5: Generating local update.json manifest...");
   const updateInfo = {
-    latestVersion: "2.9.0",
+    latestVersion: appVersion,
     minCompatibleVersion: "2.0.0",
     releaseDate: new Date().toISOString().split("T")[0],
     changelog: [
+      "Автоматическая компиляция и синхронизация версий для macOS и OTA обновлений",
       "Комплексный аудит и оптимизация исходного кода: устранены мелкие дефекты рендеринга и защищены критические циклы обновления React",
       "Ускоренный двунаправленный механизм синхронизации с GitHub и раздачи обновлений OTA",
       "Интерактивные индикаторы статуса API и оптимизированное время ожидания для бесперебойной работы ИИ-модулей",
