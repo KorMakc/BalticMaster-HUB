@@ -1358,11 +1358,72 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-app.get("/api/check-update", (req, res) => {
+app.get("/update.json", (req, res) => {
+  const filePath = path.join(process.cwd(), "update.json");
+  if (fs.existsSync(filePath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      return res.json(data);
+    } catch (e) {
+      console.error("Error parsing local update.json:", e);
+    }
+  }
   res.json({
     latestVersion: "2.9.0",
     minCompatibleVersion: "2.0.0",
-    releaseDate: "2026-07-07",
+    releaseDate: new Date().toISOString().split("T")[0],
+    changelog: [
+      "Комплексный аудит и оптимизация исходного кода: устранены мелкие дефекты рендеринга и защищены критические циклы обновления React",
+      "Ускоренный двунаправленный механизм синхронизации с GitHub и раздачи обновлений OTA",
+      "Интерактивные индикаторы статуса API и оптимизированное время ожидания для бесперебойной работы ИИ-модулей",
+      "Полная поддержка раздельного скачивания macOS-архива для высокоскоростного развертывания"
+    ],
+    downloadUrl: "/api/download-offline-html"
+  });
+});
+
+app.get("/api/update.json", (req, res) => {
+  const filePath = path.join(process.cwd(), "update.json");
+  if (fs.existsSync(filePath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      return res.json(data);
+    } catch (e) {
+      console.error("Error parsing local update.json for api route:", e);
+    }
+  }
+  res.json({
+    latestVersion: "2.9.0",
+    minCompatibleVersion: "2.0.0",
+    releaseDate: new Date().toISOString().split("T")[0],
+    changelog: [
+      "Комплексный аудит и оптимизация исходного кода: устранены мелкие дефекты рендеринга и защищены критические циклы обновления React",
+      "Ускоренный двунаправленный механизм синхронизации с GitHub и раздачи обновлений OTA",
+      "Интерактивные индикаторы статуса API и оптимизированное время ожидания для бесперебойной работы ИИ-модулей",
+      "Полная поддержка раздельного скачивания macOS-архива для высокоскоростного развертывания"
+    ],
+    downloadUrl: "/api/download-offline-html"
+  });
+});
+
+app.get("/api/check-update", (req, res) => {
+  const filePath = path.join(process.cwd(), "update.json");
+  if (fs.existsSync(filePath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      // Ensure downloadUrl points correctly if it's set to raw local file
+      if (data.downloadUrl === "baltic_master_zen.html") {
+        data.downloadUrl = "/api/download-offline-html";
+      }
+      return res.json(data);
+    } catch (e) {
+      console.error("Error parsing local update.json for check-update:", e);
+    }
+  }
+  res.json({
+    latestVersion: "2.9.0",
+    minCompatibleVersion: "2.0.0",
+    releaseDate: "2026-07-09",
     changelog: [
       "Комплексный аудит и оптимизация исходного кода: устранены мелкие дефекты рендеринга и защищены критические циклы обновления React",
       "Ускоренный двунаправленный механизм синхронизации с GitHub и раздачи обновлений OTA",
@@ -1440,6 +1501,19 @@ app.post("/api/github-sync", async (req, res) => {
       downloadUrl: targetHtmlDownloadUrl
     };
     const jsonContent = JSON.stringify(updateInfo, null, 2);
+
+    // Write update.json locally on disk as well so it's always created and available
+    try {
+      fs.writeFileSync(path.join(process.cwd(), "update.json"), jsonContent, "utf8");
+      const distMacDir = path.join(process.cwd(), "dist-mac");
+      if (!fs.existsSync(distMacDir)) {
+        fs.mkdirSync(distMacDir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(distMacDir, "update.json"), jsonContent, "utf8");
+      console.log("Locally saved update.json to disk and dist-mac/update.json.");
+    } catch (writeErr) {
+      console.error("Failed to save update.json locally during sync:", writeErr);
+    }
 
     // 3. Check if branch exists to support clean pushing onto both empty and populated repos
     let branchExists = false;

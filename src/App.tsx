@@ -411,30 +411,75 @@ export default function App() {
       logDiagnostic("error", `Тест дисковой системы провален: ${err.message || err}`);
     }
 
-    // 2. Integration API Latency & Health Check
-    const healthUrl = getApiUrl("/api/health");
-    const tStartHealth = performance.now();
+    // 2. Integration API Latency & Health Check (Local & Cloud Server)
+    const localHealthUrl = "http://localhost:3000/api/health";
+    const resolvedHealthUrl = getApiUrl("/api/health");
+    
+    // First: Check connection to the actual local Node.js server (localhost:3000)
+    logDiagnostic("info", "Проверка прямого соединения с локальным Node.js сервером (localhost:3000)...");
     try {
       const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 3000);
-      const res = await fetch(healthUrl, { signal: controller.signal });
+      const id = setTimeout(() => controller.abort(), 1500);
+      const res = await fetch(localHealthUrl, { signal: controller.signal });
       clearTimeout(id);
-      const tEndHealth = performance.now();
-      const healthLatency = (tEndHealth - tStartHealth).toFixed(0);
-
       if (res.ok) {
-        const data = await res.json() as any;
-        logDiagnostic("success", `Тест API сервера: Успешно (отклик: ${healthLatency} мс). Сервер активен.`);
-        if (data.hasGeminiKey) {
-          logDiagnostic("success", "Серверный модуль ИИ: Токен Gemini API настроен и готов к генерации контента.");
-        } else {
-          logDiagnostic("info", "Серверный модуль ИИ: Ключ Gemini API отсутствует на сервере. Будет использован локальный парсер или ключ пользователя.");
+        logDiagnostic("success", "Связь с локальным Node.js сервером (localhost:3000) успешно установлена. Локальный бэкенд активен.");
+      } else {
+        logDiagnostic("info", `Локальный Node.js сервер на localhost:3000 доступен, но вернул код состояния: ${res.status}.`);
+      }
+    } catch (err) {
+      logDiagnostic("info", "Локальный Node.js сервер не запущен. Все ИИ-функции автоматически перенаправлены на высокоскоростной облачный ИИ-сервер Baltic Master.");
+    }
+
+    // Second: Check connection to the active/resolved API server (Cloud / Custom)
+    logDiagnostic("info", `Тестирование связи с активным ИИ-сервером сборки по адресу: ${resolvedHealthUrl}...`);
+    const tStartHealth = performance.now();
+    let resHealth: Response | null = null;
+    let usedHealthUrl = resolvedHealthUrl;
+    
+    try {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 3500);
+      resHealth = await fetch(resolvedHealthUrl, { signal: controller.signal });
+      clearTimeout(id);
+    } catch (err: any) {
+      const isLocalhost = resolvedHealthUrl.includes("localhost") || resolvedHealthUrl.includes("127.0.0.1") || resolvedHealthUrl.includes("0.0.0.0");
+      if (isLocalhost) {
+        const cloudFallback = "https://ais-pre-jnnrls4j3wermypgdn6dud-351182769872.europe-west2.run.app/api/health";
+        logDiagnostic("info", `Основной локальный адрес недоступен. Автоматическое переключение проверки на резервный облачный сервер: ${cloudFallback}...`);
+        try {
+          const controller = new AbortController();
+          const id = setTimeout(() => controller.abort(), 3500);
+          resHealth = await fetch(cloudFallback, { signal: controller.signal });
+          clearTimeout(id);
+          usedHealthUrl = cloudFallback;
+        } catch (fallbackErr) {
+          logDiagnostic("error", `Связь с серверами отсутствует. Проверьте подключение к Интернету.`);
         }
       } else {
-        logDiagnostic("error", `Тест API сервера: сервер вернул код ${res.status} ${res.statusText}.`);
+        logDiagnostic("error", `Связь с сервером сборки отсутствует: ${err.message || err}. Проверьте подключение к Интернету или настройки API-адреса.`);
       }
-    } catch (err: any) {
-      logDiagnostic("error", `Связь с локальным Node.js сервером отсутствует (офлайн режим): ${err.message || err}`);
+    }
+
+    if (resHealth) {
+      const tEndHealth = performance.now();
+      const healthLatency = (tEndHealth - tStartHealth).toFixed(0);
+      
+      if (resHealth.ok) {
+        try {
+          const data = await resHealth.json() as any;
+          logDiagnostic("success", `Тест API сервера сборки (${usedHealthUrl.includes("localhost") ? "Локальный" : "Облачный"}): Успешно (время отклика: ${healthLatency} мс). Сервер онлайн и полностью функционален.`);
+          if (data.hasGeminiKey) {
+            logDiagnostic("success", "Серверный модуль ИИ: Токен Gemini API на сервере настроен и готов к генерации контента.");
+          } else {
+            logDiagnostic("info", "Серверный модуль ИИ: Используется пользовательский или локальный ключ ИИ.");
+          }
+        } catch (jsonErr) {
+          logDiagnostic("error", "Тест API сервера сборки: Сервер вернул некорректный формат ответа.");
+        }
+      } else {
+        logDiagnostic("error", `Тест API сервера сборки: Сервер вернул ошибку с кодом ${resHealth.status} (${resHealth.statusText}).`);
+      }
     }
 
     // 3. GitHub API & Update Manifest Latency Check
@@ -461,12 +506,14 @@ export default function App() {
 
       if (res.ok) {
         const data = await res.json() as any;
-        logDiagnostic("success", `Соединение с GitHub: Активно. Маршрутизация работает (пинг: ${githubLatency} мс). Манифест обновлений успешно загружен. Версия на сервере: ${data.latestVersion || "Неизвестно"}.`);
+        logDiagnostic("success", `Соединение с GitHub: Активно. Маршрутизация работает (пинг: ${githubLatency} мс). Манифест обновлений успешно загружен. Актуальная версия сборки: ${data.latestVersion || "Неизвестно"}.`);
+      } else if (res.status === 404) {
+        logDiagnostic("info", `Канал синхронизации GitHub: Активен. Манифест 'update.json' пока отсутствует в репозитории. Чтобы активировать ОТА-обновления, выполните синхронизацию (GitHub Sync) во вкладке настроек.`);
       } else {
-        logDiagnostic("error", `GitHub вернул код состояния ${res.status}. Доступ к обновлениям ограничен. Ссылка: ${fetchUrl}`);
+        logDiagnostic("error", `GitHub вернул код состояния ${res.status}. Доступ к обновлениям временно ограничен. Ссылка: ${fetchUrl}`);
       }
     } catch (err: any) {
-      logDiagnostic("error", `Сервер обновлений GitHub недоступен (работа в автономном режиме): ${err.message || err}`);
+      logDiagnostic("error", `Сервер обновлений GitHub временно недоступен: ${err.message || err}`);
     }
 
     // 4. Data Consistency & Integrity Check
@@ -527,6 +574,8 @@ export default function App() {
       return route;
     }
 
+    const isDesktop = !!(window as any).electronAPI || (typeof window !== "undefined" && window.location && (window.location.protocol === "file:" || !window.location.hostname));
+
     // 1. Check if there is a custom user-defined API URL in state or localStorage
     const savedApiUrl = customApiUrl.trim() !== "" 
       ? customApiUrl 
@@ -534,24 +583,23 @@ export default function App() {
 
     if (savedApiUrl && savedApiUrl.trim() !== "") {
       const base = savedApiUrl.trim().endsWith("/") ? savedApiUrl.trim().slice(0, -1) : savedApiUrl.trim();
+      const isLocalhost = base.includes("localhost") || base.includes("127.0.0.1") || base.includes("0.0.0.0");
+      if (isLocalhost && isDesktop) {
+        // Transparently bypass inactive local servers in the desktop app
+        return `https://ais-pre-jnnrls4j3wermypgdn6dud-351182769872.europe-west2.run.app${route}`;
+      }
       return `${base}${route}`;
     }
 
-    const isLocalFile = typeof window !== "undefined" && window.location && (
-      window.location.protocol === "file:" || 
-      !window.location.hostname || 
-      !!(window as any).electronAPI
-    );
-    if (isLocalFile) {
+    if (isDesktop) {
       // Prioritize the VITE_API_URL injected during compilation (which reflects the actual active server)
       const compiledApiUrl = (import.meta as any).env.VITE_API_URL;
       if (compiledApiUrl && compiledApiUrl.trim() !== "") {
         let base = compiledApiUrl.endsWith("/") ? compiledApiUrl.slice(0, -1) : compiledApiUrl;
-        // CRITICAL FIX: If running locally outside AI Studio, any requests to private 'ais-dev' URLs
-        // will be blocked by Google Cloud Run Identity-Aware Proxy (returning sign-in HTML instead of JSON).
-        // The shared 'ais-pre' URL is public and does not require Google login.
-        // Therefore, we automatically rewrite 'ais-dev' to 'ais-pre' for offline/desktop clients!
-        if (base.includes("ais-dev-")) {
+        const isLocalhost = base.includes("localhost") || base.includes("127.0.0.1") || base.includes("0.0.0.0");
+        if (isLocalhost) {
+          base = "https://ais-pre-jnnrls4j3wermypgdn6dud-351182769872.europe-west2.run.app";
+        } else if (base.includes("ais-dev-")) {
           base = base.replace("ais-dev-", "ais-pre-");
         }
         return `${base}${route}`;
@@ -565,13 +613,14 @@ export default function App() {
   // Helper: Robust fetch with exponential backoff and cold-start detection for Cloud Run
   const robustFetch = async (url: string, options?: RequestInit, maxRetries = 4, delayMs = 2500): Promise<Response> => {
     let attempt = 0;
+    let activeUrl = url;
     while (attempt < maxRetries) {
       attempt++;
       try {
-        console.log(`RobustFetch: [Attempt ${attempt}/${maxRetries}] Requesting ${url}...`);
-        const response = await fetch(url, options);
+        console.log(`RobustFetch: [Attempt ${attempt}/${maxRetries}] Requesting ${activeUrl}...`);
+        const response = await fetch(activeUrl, options);
         
-        const isHtmlDownload = url.includes("/api/download-offline-html");
+        const isHtmlDownload = activeUrl.includes("/api/download-offline-html");
         
         if (response.ok) {
           const contentType = response.headers.get("content-type") || "";
@@ -579,7 +628,7 @@ export default function App() {
             const clone = response.clone();
             const text = await clone.text();
             
-            const isJsonEndpoint = !isHtmlDownload && !url.endsWith(".html") && !url.includes("/download-mac-zip") && !url.includes("/download-offline-html");
+            const isJsonEndpoint = !isHtmlDownload && !activeUrl.endsWith(".html") && !activeUrl.includes("/download-mac-zip") && !activeUrl.includes("/download-offline-html");
             const looksLikeCloudRunWarming = text.includes("Please wait while your application starts") || text.includes("App is starting") || text.includes("Service Unavailable") || text.includes("Google Cloud");
             const looksLikeAuthRedirect = text.includes("Sign in") || text.includes("google-signin") || text.includes("accounts.google.com");
             
@@ -629,6 +678,29 @@ export default function App() {
         }
       } catch (err: any) {
         console.warn(`RobustFetch: [Attempt ${attempt}] Fetch error:`, err);
+        
+        // Automatic localhost to cloud fallback
+        const isLocalhost = activeUrl.includes("localhost") || activeUrl.includes("127.0.0.1") || activeUrl.includes("0.0.0.0");
+        if (isLocalhost) {
+          const cloudFallbackBase = "https://ais-pre-jnnrls4j3wermypgdn6dud-351182769872.europe-west2.run.app";
+          try {
+            let routePart = "";
+            if (activeUrl.startsWith("http://") || activeUrl.startsWith("https://")) {
+              const urlObj = new URL(activeUrl);
+              routePart = urlObj.pathname + urlObj.search;
+            } else {
+              routePart = activeUrl;
+            }
+            const fallbackUrl = `${cloudFallbackBase}${routePart}`;
+            console.log(`RobustFetch: Localhost server is offline or unreachable. Redirecting request to Cloud Run: ${fallbackUrl}`);
+            activeUrl = fallbackUrl;
+            // Retry immediately on cloud
+            continue;
+          } catch (e) {
+            console.error("RobustFetch: Localhost fallback construction failed:", e);
+          }
+        }
+
         if (err && err.isNonRetryable) {
           throw err;
         }
@@ -782,18 +854,24 @@ export default function App() {
   };
 
   const getCurrentlyResolvedApiUrl = (): string => {
+    const isDesktop = !!(window as any).electronAPI || (typeof window !== "undefined" && window.location && (window.location.protocol === "file:" || !window.location.hostname));
+
     if (customApiUrl && customApiUrl.trim() !== "") {
-      return customApiUrl.trim().endsWith("/") ? customApiUrl.trim().slice(0, -1) : customApiUrl.trim();
+      const base = customApiUrl.trim().endsWith("/") ? customApiUrl.trim().slice(0, -1) : customApiUrl.trim();
+      const isLocalhost = base.includes("localhost") || base.includes("127.0.0.1") || base.includes("0.0.0.0");
+      if (isLocalhost && isDesktop) {
+        return "https://ais-pre-jnnrls4j3wermypgdn6dud-351182769872.europe-west2.run.app";
+      }
+      return base;
     }
-    const isLocalFile = typeof window !== "undefined" && window.location && (
-      window.location.protocol === "file:" || 
-      !window.location.hostname || 
-      !!(window as any).electronAPI
-    );
-    if (isLocalFile) {
+    if (isDesktop) {
       const compiledApiUrl = (import.meta as any).env.VITE_API_URL;
       if (compiledApiUrl && compiledApiUrl.trim() !== "") {
         let base = compiledApiUrl.endsWith("/") ? compiledApiUrl.slice(0, -1) : compiledApiUrl;
+        const isLocalhost = base.includes("localhost") || base.includes("127.0.0.1") || base.includes("0.0.0.0");
+        if (isLocalhost) {
+          return "https://ais-pre-jnnrls4j3wermypgdn6dud-351182769872.europe-west2.run.app";
+        }
         if (base.includes("ais-dev-")) {
           base = base.replace("ais-dev-", "ais-pre-");
         }

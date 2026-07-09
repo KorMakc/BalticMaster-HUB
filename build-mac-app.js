@@ -348,6 +348,25 @@ try {
 
   await zipDirectory(appFolder, zipOutputPath);
 
+  // Generate local update.json manifest so it is always present after a new build
+  console.log("Step 6.5: Generating local update.json manifest...");
+  const updateInfo = {
+    latestVersion: "2.9.0",
+    minCompatibleVersion: "2.0.0",
+    releaseDate: new Date().toISOString().split("T")[0],
+    changelog: [
+      "Комплексный аудит и оптимизация исходного кода: устранены мелкие дефекты рендеринга и защищены критические циклы обновления React",
+      "Ускоренный двунаправленный механизм синхронизации с GitHub и раздачи обновлений OTA",
+      "Интерактивные индикаторы статуса API и оптимизированное время ожидания для бесперебойной работы ИИ-модулей",
+      "Полная поддержка раздельного скачивания macOS-архива для высокоскоростного развертывания"
+    ],
+    downloadUrl: "baltic_master_zen.html"
+  };
+  const jsonContent = JSON.stringify(updateInfo, null, 2);
+  fs.writeFileSync(path.join(workspaceRoot, "update.json"), jsonContent, "utf8");
+  fs.writeFileSync(path.join(distPublicDir, "update.json"), jsonContent, "utf8");
+  console.log("Successfully created update.json in workspace root and dist-mac/!");
+
   // 8. Split the ZIP file into 24MB chunks for safe download through proxy limits
   console.log("Step 7: Splitting ZIP archive into 24MB chunks for safe downloading...");
   const chunkSize = 24 * 1024 * 1024; // 24MB
