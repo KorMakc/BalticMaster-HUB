@@ -1358,6 +1358,19 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+function getPackageVersion(): string {
+  try {
+    const pkgPath = path.join(process.cwd(), "package.json");
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+      return pkg.version || "2.9.0";
+    }
+  } catch (e) {
+    console.error("Error reading package.json version:", e);
+  }
+  return "2.9.0";
+}
+
 app.get("/update.json", (req, res) => {
   const filePath = path.join(process.cwd(), "update.json");
   if (fs.existsSync(filePath)) {
@@ -1369,7 +1382,7 @@ app.get("/update.json", (req, res) => {
     }
   }
   res.json({
-    latestVersion: "2.9.0",
+    latestVersion: getPackageVersion(),
     minCompatibleVersion: "2.0.0",
     releaseDate: new Date().toISOString().split("T")[0],
     changelog: [
@@ -1393,7 +1406,7 @@ app.get("/api/update.json", (req, res) => {
     }
   }
   res.json({
-    latestVersion: "2.9.0",
+    latestVersion: getPackageVersion(),
     minCompatibleVersion: "2.0.0",
     releaseDate: new Date().toISOString().split("T")[0],
     changelog: [
@@ -1421,7 +1434,7 @@ app.get("/api/check-update", (req, res) => {
     }
   }
   res.json({
-    latestVersion: "2.9.0",
+    latestVersion: getPackageVersion(),
     minCompatibleVersion: "2.0.0",
     releaseDate: "2026-07-09",
     changelog: [
@@ -1476,6 +1489,43 @@ app.post("/api/github-sync", async (req, res) => {
     console.log(`GitHub Sync initiated for ${owner}/${repo} on branch ${activeBranch}`);
     console.log(`Baking manifest URL: ${targetManifestUrl}`);
 
+    // Auto-increment version upon synchronization
+    let activeVersion = "2.9.0";
+    try {
+      const pkgPath = path.join(process.cwd(), "package.json");
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+        const oldVersion = pkg.version || "2.9.0";
+        
+        // Let's increment the patch version (e.g. 2.9.0 -> 2.9.1)
+        const parts = oldVersion.split(".");
+        if (parts.length === 3) {
+          const patch = parseInt(parts[2], 10);
+          if (!isNaN(patch)) {
+            parts[2] = (patch + 1).toString();
+          }
+        } else {
+          parts.push("1");
+        }
+        activeVersion = parts.join(".");
+        
+        pkg.version = activeVersion;
+        fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2), "utf8");
+        console.log(`Automatically incremented package.json version from ${oldVersion} to ${activeVersion}`);
+
+        // Now replace all occurrences of the old version with the new one in App.tsx
+        const appTxPath = path.join(process.cwd(), "src/App.tsx");
+        if (fs.existsSync(appTxPath)) {
+          let appTxContent = fs.readFileSync(appTxPath, "utf8");
+          appTxContent = appTxContent.split(oldVersion).join(activeVersion);
+          fs.writeFileSync(appTxPath, appTxContent, "utf8");
+          console.log(`Updated App.tsx references from ${oldVersion} to ${activeVersion}`);
+        }
+      }
+    } catch (verErr: any) {
+      console.error("Failed to automatically increment version before sync:", verErr);
+    }
+
     // 1. Compile/Regenerate offline HTML with the GitHub manifest URL baked in
     await regenerateOfflineHtml(serverUrl, targetManifestUrl);
 
@@ -1489,10 +1539,11 @@ app.post("/api/github-sync", async (req, res) => {
 
     // 2. Prepare the update.json content dynamically
     const updateInfo = {
-      latestVersion: "2.9.0",
+      latestVersion: activeVersion,
       minCompatibleVersion: "2.0.0",
       releaseDate: new Date().toISOString().split("T")[0],
       changelog: [
+        "Автоматическое OTA обновление до версии v" + activeVersion,
         "Комплексный аудит и оптимизация исходного кода: устранены мелкие дефекты рендеринга и защищены критические циклы обновления React",
         "Ускоренный двунаправленный механизм синхронизации с GitHub и раздачи обновлений OTA",
         "Интерактивные индикаторы статуса API и оптимизированное время ожидания для бесперебойной работы ИИ-модулей",
@@ -1642,7 +1693,7 @@ app.post("/api/github-sync", async (req, res) => {
 
     // 5. Push baltic_master_zen.html
     console.log("Pushing baltic_master_zen.html to GitHub...");
-    await pushToGithubWithRetry("baltic_master_zen.html", htmlContent, `Release v2.9.0 (Auto-build from AI Studio)`);
+    await pushToGithubWithRetry("baltic_master_zen.html", htmlContent, `Release v${activeVersion} (Auto-build from AI Studio)`);
 
     // 6. Wait a brief moment to allow GitHub to update the head ref and stabilize
     console.log("Waiting 2 seconds to allow GitHub's database to stabilize before next commit...");
@@ -1650,7 +1701,7 @@ app.post("/api/github-sync", async (req, res) => {
 
     // 7. Push update.json
     console.log("Pushing update.json to GitHub...");
-    await pushToGithubWithRetry("update.json", jsonContent, `Update update.json for v2.9.0`);
+    await pushToGithubWithRetry("update.json", jsonContent, `Update update.json for v${activeVersion}`);
 
     console.log("GitHub sync completed successfully!");
 
@@ -1659,7 +1710,7 @@ app.post("/api/github-sync", async (req, res) => {
       message: "Синхронизация успешно завершена! Файлы залиты на GitHub.",
       manifestUrl: targetManifestUrl,
       htmlUrl: targetHtmlDownloadUrl,
-      version: "2.9.0"
+      version: activeVersion
     });
 
   } catch (error: any) {
