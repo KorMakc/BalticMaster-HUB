@@ -57,6 +57,99 @@ import {
 import { PRELOADED_ARTICLES, PRESET_PROMPTS, SCHEDULE_PLAN, AI_TOPICS } from "./data";
 import { Article, PromptItem, AIArticle, GeneratedArticle } from "./types";
 
+const EQUIP_OPTIONS = [
+  { name: "пароконвектомата Rational", kw: "пароконвектомат Rational ремонт ТЭН сервис СПб" },
+  { name: "холодильной витрины", kw: "холодильная витрина утечка фреона компрессор ремонт" },
+  { name: "купольной посудомоечной машины", kw: "посудомоечная машина засор слив ТЭН чистка" },
+  { name: "льдогенератора Scotsman", kw: "льдогенератор не делает лед компрессор Scotsman" },
+  { name: "камеры шоковой заморозки", kw: "шоковая заморозка компрессор вентилятор температура" },
+  { name: "индукционной плиты", kw: "индукционная плита конфорка ошибка E4 ремонт" },
+  { name: "тестомеса Varimixer", kw: "тестомеситель миксер ремень мотор подшипник" },
+  { name: "ленточной пилы для мяса", kw: "ленточная пила заточка полотна мясной цех" },
+  { name: "печи Unox", kw: "печь Unox уплотнитель вентилятор пар ремонт" },
+  { name: "кофемашины суперавтомата", kw: "кофемашина ремонт чистка жернова помпа" },
+  { name: "гриля для куры-гриль", kw: "гриль ТЭН мотор вращение ремонт" },
+  { name: "шкафа расстойки теста", kw: "расстойка датчик влажности ТЭН ремонт" }
+];
+
+const PROBLEM_OPTIONS = [
+  { text: "греется компрессор и не охлаждает", fix: "очистить конденсатор от пыли" },
+  { text: "выбивает автомат при включении ТЭНа", fix: "выявить пробой нагревателя" },
+  { text: "не держит температуру в камере", fix: "заменить изношенный уплотнитель" },
+  { text: "шумит вентилятор обдува", fix: "смазать или заменить подшипник" },
+  { text: "забился сливной клапан воды", fix: "промыть жироуловитель" },
+  { text: "остаются грязные разводы на тарелках", fix: "прочистить форсунки и проверить соль" },
+  { text: "покрывается плотной шубой испаритель", fix: "проверить датчик оттайки" },
+  { text: "медленно нарастает лед", fix: "устранить микроутечку фреона" },
+  { text: "гудит редуктор при замесе", fix: "натянуть или заменить приводной ремень" },
+  { text: "полотно пилы уходит в сторону", fix: "заточить зубья под правильным углом" }
+];
+
+const TIME_OPTIONS = ["15", "20", "30", "45", "60"];
+const PERCENT_OPTIONS = ["25", "35", "40", "50", "65"];
+
+const ACTION_OPTIONS = [
+  "правильной промывки от накипи лимонной кислотой",
+  "своевременной чистки конденсатора от жира и пыли",
+  "быстрой замены уплотнительной резинки дверцы",
+  "профилактики ТЭНов и датчиков уровня воды",
+  "регулярной калибровки термостатов",
+  "контроля натяжения приводных ремней и смазки"
+];
+
+const BUSINESS_OPTIONS = [
+  "небольшой уютной кофейни",
+  "пиццерии с высокой нагрузкой",
+  "загородного ресторана авторской кухни",
+  "мясного цеха супермаркета",
+  "кондитерской студии и мини-пекарни",
+  "столовой при бизнес-центре"
+];
+
+const YEAR_OPTIONS = ["2026 году", "новом сезоне", "период пиковых нагрузок"];
+
+function generateDynamicPresetTopics() {
+  const topics: Array<{ title: string; keywords: string }> = [];
+
+  // 1. Problem & Solution
+  const eq1 = EQUIP_OPTIONS[Math.floor(Math.random() * EQUIP_OPTIONS.length)];
+  const pr1 = PROBLEM_OPTIONS[Math.floor(Math.random() * PROBLEM_OPTIONS.length)];
+  const t1 = TIME_OPTIONS[Math.floor(Math.random() * TIME_OPTIONS.length)];
+  topics.push({
+    title: `Проблема с ${eq1.name}: ${pr1.text} — как решить вопрос за ${t1} минут самостоятельно`,
+    keywords: `${eq1.kw} ${pr1.fix}`
+  });
+
+  // 2. Savings & Lifespan
+  const act2 = ACTION_OPTIONS[Math.floor(Math.random() * ACTION_OPTIONS.length)];
+  const pct2 = PERCENT_OPTIONS[Math.floor(Math.random() * PERCENT_OPTIONS.length)];
+  const eq2 = EQUIP_OPTIONS[(Math.floor(Math.random() * EQUIP_OPTIONS.length) + 1) % EQUIP_OPTIONS.length];
+  topics.push({
+    title: `Как снизить расходы на ремонт ${eq2.name} на ${pct2}% благодаря секрету ${act2}`,
+    keywords: `${eq2.kw} профилактика обслуживание экономия`
+  });
+
+  // 3. Choice mistakes
+  const eq3 = EQUIP_OPTIONS[(Math.floor(Math.random() * EQUIP_OPTIONS.length) + 2) % EQUIP_OPTIONS.length];
+  const bus3 = BUSINESS_OPTIONS[Math.floor(Math.random() * BUSINESS_OPTIONS.length)];
+  const yr3 = YEAR_OPTIONS[Math.floor(Math.random() * YEAR_OPTIONS.length)];
+  const num3 = [3, 5, 7][Math.floor(Math.random() * 3)];
+  topics.push({
+    title: `${num3} фатальных ошибок при выборе ${eq3.name} для ${bus3} в ${yr3}`,
+    keywords: `${eq3.kw} выбор ошибки оборудование HoReCa`
+  });
+
+  // 4. Practical tips
+  const eq4 = EQUIP_OPTIONS[(Math.floor(Math.random() * EQUIP_OPTIONS.length) + 3) % EQUIP_OPTIONS.length];
+  const pr4 = PROBLEM_OPTIONS[(Math.floor(Math.random() * PROBLEM_OPTIONS.length) + 3) % PROBLEM_OPTIONS.length];
+  topics.push({
+    title: `Почему ${pr4.text} у ${eq4.name}: честный разбор и диагностика от Балтик Мастер`,
+    keywords: `${eq4.kw} ${pr4.fix} диагностика мастер`
+  });
+
+  return topics;
+}
+
 export default function App() {
   // Navigation tabs
   const [activeTab, setActiveTab] = useState<string>("t1");
@@ -411,28 +504,13 @@ export default function App() {
       logDiagnostic("error", `Тест дисковой системы провален: ${err.message || err}`);
     }
 
-    // 2. Integration API Latency & Health Check (Local & Cloud Server)
-    const localHealthUrl = "http://localhost:3000/api/health";
+    // 2. Integration API Latency & Health Check (Online Cloud Server)
     const resolvedHealthUrl = getApiUrl("/api/health");
     
-    // First: Check connection to the actual local Node.js server (localhost:3000)
-    logDiagnostic("info", "Проверка прямого соединения с локальным Node.js сервером (localhost:3000)...");
-    try {
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 1500);
-      const res = await fetch(localHealthUrl, { signal: controller.signal });
-      clearTimeout(id);
-      if (res.ok) {
-        logDiagnostic("success", "Связь с локальным Node.js сервером (localhost:3000) успешно установлена. Локальный бэкенд активен.");
-      } else {
-        logDiagnostic("info", `Локальный Node.js сервер на localhost:3000 доступен, но вернул код состояния: ${res.status}.`);
-      }
-    } catch (err) {
-      logDiagnostic("info", "Локальный Node.js сервер не запущен. Все ИИ-функции автоматически перенаправлены на высокоскоростной облачный ИИ-сервер Baltic Master.");
-    }
+    logDiagnostic("success", "Режим работы: Pure Online Cloud Mode (Локальные службы отключены по требованию).");
 
     // Second: Check connection to the active/resolved API server (Cloud / Custom)
-    logDiagnostic("info", `Тестирование связи с активным ИИ-сервером сборки по адресу: ${resolvedHealthUrl}...`);
+    logDiagnostic("info", `Тестирование связи с активным ИИ-сервером по адресу: ${resolvedHealthUrl}...`);
     const tStartHealth = performance.now();
     let resHealth: Response | null = null;
     let usedHealthUrl = resolvedHealthUrl;
@@ -468,7 +546,7 @@ export default function App() {
       if (resHealth.ok) {
         try {
           const data = await resHealth.json() as any;
-          logDiagnostic("success", `Тест API сервера сборки (${usedHealthUrl.includes("localhost") ? "Локальный" : "Облачный"}): Успешно (время отклика: ${healthLatency} мс). Сервер онлайн и полностью функционален.`);
+          logDiagnostic("success", `Тест API сервера (Облачный ИИ-сервер Baltic Master): Успешно (время отклика: ${healthLatency} мс). Сервер онлайн и полностью доступен.`);
           if (data.hasGeminiKey) {
             logDiagnostic("success", "Серверный модуль ИИ: Токен Gemini API на сервере настроен и готов к генерации контента.");
           } else {
@@ -2440,13 +2518,18 @@ export default function App() {
     }
   };
 
-  // Preset topics lists to populate fields with one click
-  const PRESET_TOPICS = [
-    { title: "Забился слив в посудомойке: как очистить жироуловитель за 15 минут", keywords: "посудомойка жироуловитель засор чистка" },
-    { title: "Тече фреон в камере: как понять, что ваш холодильник требует заправки", keywords: "холодильник утечка фреон ремонт СПб" },
-    { title: "Секреты выпечки багета: подбор печи с пароувлажнением для пекарни", keywords: "печь пароконвектомат выпечка багет пекарня" },
-    { title: "Как снизить чек на электроэнергию в ресторане с помощью ухода за ТЭНами", keywords: "ТЭН очистка накипь энергоэффективность ресторан" }
-  ];
+  // Preset topics lists to populate fields with one click (generated dynamically on mount)
+  const [presetTopics, setPresetTopics] = useState<Array<{ title: string; keywords: string }>>([]);
+
+  const handleRefreshPresets = () => {
+    setPresetTopics(generateDynamicPresetTopics());
+  };
+
+  useEffect(() => {
+    if (activeTab === "t7") {
+      handleRefreshPresets();
+    }
+  }, [activeTab]);
 
   // Article count and percentages
   const totalArticles = 40;
@@ -5413,9 +5496,19 @@ export default function App() {
 
               {/* Presets Quick-selector */}
               <div className="border-t border-slate-100 pt-4">
-                <span className="text-xs font-bold text-slate-500 block mb-2">Быстрый выбор темы-заготовки:</span>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-slate-500 block">Быстрый выбор темы-заготовки:</span>
+                  <button
+                    type="button"
+                    onClick={handleRefreshPresets}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 transition bg-indigo-50 px-2.5 py-1 rounded-lg cursor-pointer"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    Обновить темы
+                  </button>
+                </div>
                 <div className="flex flex-wrap gap-2">
-                  {PRESET_TOPICS.map((preset, i) => (
+                  {presetTopics.map((preset, i) => (
                     <button
                       key={i}
                       type="button"
@@ -5424,9 +5517,10 @@ export default function App() {
                         setGeminiKeywords(preset.keywords);
                         showToast("Тема загружена в форму", "info");
                       }}
-                      className="text-[11px] font-semibold bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 px-3 py-1.5 rounded-lg border border-slate-200/60 transition"
+                      className="text-[11px] font-semibold bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 px-3 py-1.5 rounded-lg border border-slate-200/60 transition text-left cursor-pointer max-w-full"
+                      title={preset.title}
                     >
-                      {preset.title.substring(0, 45)}...
+                      {preset.title.length > 55 ? `${preset.title.substring(0, 52)}...` : preset.title}
                     </button>
                   ))}
                 </div>

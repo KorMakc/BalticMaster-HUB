@@ -149,10 +149,11 @@ app.post("/api/generate-article", async (req, res) => {
     return res.status(400).json({ error: "Тема статьи обязательна для заполнения." });
   }
 
-  // Gracefully and silently fall back to local generator if no Gemini API key is available
+  // Ensure we are working strictly online. No local generator fallback.
   if (!isAIKeyAvailable(customApiKey)) {
-    const localText = generateLocalArticleFallback(topic, keywords || "", style || "expert", length || "medium", wishes || "");
-    return res.json({ text: localText });
+    return res.status(400).json({ 
+      error: "API-ключ Google Gemini не настроен. Пожалуйста, добавьте рабочий API-ключ в раздел 'Secrets' в AI Studio или укажите его в настройках приложения для онлайн-генерации." 
+    });
   }
 
   try {
@@ -216,11 +217,10 @@ ${wishesSection}
 
     res.json({ text: generatedText });
   } catch (error: any) {
-    console.warn("Gemini Generation Error, falling back to local generator:", error.message || error);
-    
-    // Fallback to high-quality local generation so the app is fully functional without any API keys configured!
-    const localText = generateLocalArticleFallback(topic, keywords || "", style || "expert", length || "medium", wishes || "");
-    res.json({ text: localText });
+    console.error("Gemini Generation Error:", error);
+    res.status(500).json({ 
+      error: `Ошибка при онлайн-генерации через Gemini AI: ${error.message || error}` 
+    });
   }
 });
 
